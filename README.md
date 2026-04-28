@@ -173,22 +173,25 @@ will switch the tty to `KD_GRAPHICS` mode automatically.)
 
 ## Verifying
 
+For the full lockout-safe verification ladder (host dry checks → loop
+image → fake ask file → VM → bare metal stages), see
+[`TESTING.md`](TESTING.md). **Do not enroll on a real disk before
+working through rungs 1–4.**
+
+Quick smoke tests:
+
 ```sh
 sudo luks-controller-unlock selftest
 ```
 
-Checks that a DRM card is present, a controller is detected, cryptsetup
-is recent enough, and (informationally) that `hid-steam` is loadable.
-
-For visual confirmation without a real boot:
+Checks DRM card, controller, cryptsetup version, hid-steam availability.
 
 ```sh
-# from a free VT (Ctrl-Alt-F2) so we can grab DRM master
+# From a free VT (Ctrl-Alt-F2) so we can grab DRM master.
 sudo luks-controller-unlock test-ui
 ```
 
-This renders the unlock UI on the screen and lets you push buttons to
-see the dot row update. START exits.
+Renders the unlock UI; push buttons to see the dot row update. START exits.
 
 ```sh
 sudo luks-controller-unlock test-input
