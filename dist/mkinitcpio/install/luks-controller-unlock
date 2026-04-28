@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# mkinitcpio install hook: bundles the agent into a systemd-based initrd.
+# Place at /etc/initcpio/install/luks-controller-unlock then add
+# `luks-controller-unlock` to HOOKS in /etc/mkinitcpio.conf AFTER
+# `sd-encrypt` (or after `systemd` if you trigger the agent manually).
+
+build() {
+    if [[ ! " ${HOOKS[*]} " =~ " sd-encrypt " ]]; then
+        error "luks-controller-unlock requires the 'sd-encrypt' hook in HOOKS."
+        error "The legacy 'encrypt' (busybox) hook is not supported because it"
+        error "doesn't speak the systemd ask-password protocol."
+        return 1
+    fi
+
+    add_binary /usr/bin/luks-controller-unlock
+    add_binary /usr/bin/cryptsetup
+
+    add_systemd_unit luks-controller-unlock.service
+    add_symlink \
+        "/etc/systemd/system/cryptsetup.target.wants/luks-controller-unlock.service" \
+        "/usr/lib/systemd/system/luks-controller-unlock.service"
+
+    # DRM + KMS for rendering the UI.
+    add_module drm_kms_helper
+    add_module drm
+    add_module amdgpu i915 nouveau radeon
+
+    # Input subsystem + vendor HID drivers.
+    add_module evdev hid hid-generic
+    add_module xpad hid-sony hid-playstation hid-nintendo hid-steam
+
+    # Optional drop-in: silence the stock console password agent when
+    # ours is enabled (avoids "two prompts on screen" UX).
+    if [[ -f /etc/luks-controller-unlock/mask-console-agent ]]; then
+        add_file \
+            "/etc/luks-controller-unlock/mask-console-agent" \
+            "/usr/lib/systemd/system/systemd-ask-password-console.service.d/10-mask-when-controller.conf"
+    fi
+}
+
+help() {
+    cat <<'HELP'
+This hook bundles the luks-controller-unlock agent into the initrd so
+that LUKS volumes can be unlocked with a game controller at boot. It
+requires the 'sd-encrypt' hook to be active in HOOKS.
+
+Touch /etc/luks-controller-unlock/mask-console-agent to additionally
+disable the stock console password agent at boot — useful if you want
+the controller UI to be the only thing on screen (keyboard passphrase
+entry will still work because systemd-cryptsetup itself reads the
+controller agent's reply on the same socket).
+HELP
+}

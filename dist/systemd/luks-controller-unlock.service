@@ -1,0 +1,21 @@
+[Unit]
+Description=Controller-driven LUKS unlock agent
+DefaultDependencies=no
+Conflicts=plymouth-start.service
+Conflicts=shutdown.target
+Before=systemd-cryptsetup@.service cryptsetup.target
+After=systemd-tmpfiles-setup-dev.service systemd-udev-trigger.service
+Wants=systemd-udev-trigger.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/luks-controller-unlock agent
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=0
+TimeoutStopSec=10
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=cryptsetup.target

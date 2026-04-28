@@ -1,0 +1,42 @@
+#!/bin/sh
+# initramfs-tools hook: bundles the agent binary, cryptsetup, the DRM
+# kernel modules, and the keyscript wrapper into the initramfs.
+#
+# Install:  cp dist/debian/hooks/luks-controller-unlock \
+#               /etc/initramfs-tools/hooks/luks-controller-unlock
+#           chmod +x /etc/initramfs-tools/hooks/luks-controller-unlock
+#           cp dist/debian/keyscript.sh \
+#               /etc/initramfs-tools/luks-controller-keyscript
+#           chmod +x /etc/initramfs-tools/luks-controller-keyscript
+# Then in /etc/crypttab, add 'keyscript=/etc/initramfs-tools/luks-controller-keyscript'
+# to the relevant entry, e.g.:
+#   cryptroot UUID=... none luks,keyscript=/etc/initramfs-tools/luks-controller-keyscript
+# Then:    update-initramfs -u
+
+set -e
+
+PREREQ=""
+prereqs() {
+    echo "$PREREQ"
+}
+
+case "$1" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+copy_exec /usr/bin/luks-controller-unlock /sbin/luks-controller-unlock
+copy_exec /sbin/cryptsetup /sbin/cryptsetup
+copy_exec /etc/initramfs-tools/luks-controller-keyscript /sbin/luks-controller-keyscript
+
+# DRM/KMS for rendering the UI.
+manual_add_modules drm drm_kms_helper
+manual_add_modules amdgpu i915 nouveau radeon
+
+# Input + vendor HID drivers for controllers.
+manual_add_modules evdev hid hid_generic
+manual_add_modules xpad hid_sony hid_playstation hid_nintendo hid_steam

@@ -1,0 +1,13 @@
+#!/usr/bin/ash
+# Runtime hook for non-systemd mkinitcpio (busybox) initrds.
+#
+# This hook is intentionally a no-op: the controller-unlock flow only
+# supports systemd-based initrds (sd-encrypt). The install hook detects
+# the legacy 'encrypt' hook and refuses early, so this file should
+# never actually run. Kept here as a stub so mkinitcpio is happy if a
+# user adds 'luks-controller-unlock' to HOOKS without sd-encrypt.
+
+run_hook() {
+    msg "luks-controller-unlock: this initrd is not systemd-based; agent will not run"
+    msg "luks-controller-unlock: use 'sd-encrypt' instead of 'encrypt' to enable the agent"
+}
