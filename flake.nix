@@ -15,18 +15,16 @@
       perSystem = flake-utils.lib.eachDefaultSystem (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          toolchain = fenix.packages.${system}.stable.toolchain;
-        in
-        {
-          packages.default = pkgs.callPackage ./dist/nix/default.nix { };
+          fenixPkgs = fenix.packages.${system};
+          isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
 
-          devShells.default = pkgs.mkShell {
+          linuxNativeShell = pkgs.mkShell {
             name = "luks-controller-unlock-dev";
 
-            nativeBuildInputs = with pkgs; [
-              toolchain
-              pkg-config
-              cmake
+            nativeBuildInputs = [
+              fenixPkgs.stable.toolchain
+              pkgs.pkg-config
+              pkgs.cmake
             ];
 
             buildInputs = with pkgs; [
@@ -45,7 +43,54 @@
             env.RUST_BACKTRACE = "1";
           };
 
+          # On darwin, sidestep nixpkgs' currently-broken cross-perl by
+          # using zig's bundled cross linker and pulling libdrm as a
+          # native aarch64-linux build (delegated to linux-builder).
+          darwinCrossShell =
+            let
+              crossTarget = "aarch64-unknown-linux-gnu";
+              crossEnvName = pkgs.lib.toUpper
+                (pkgs.lib.replaceStrings [ "-" ] [ "_" ] crossTarget);
+              crossToolchain = fenixPkgs.combine [
+                fenixPkgs.stable.toolchain
+                fenixPkgs.targets.${crossTarget}.stable.rust-std
+              ];
+              linuxLibdrm = nixpkgs.legacyPackages.aarch64-linux.libdrm;
+              zigLinker = pkgs.writeShellScript "zig-cc-aarch64-linux" ''
+                exec ${pkgs.zig}/bin/zig cc -target aarch64-linux-gnu "$@"
+              '';
+            in
+            pkgs.mkShell {
+              name = "luks-controller-unlock-dev-cross";
+
+              nativeBuildInputs = [
+                crossToolchain
+                pkgs.pkg-config
+                pkgs.zig
+              ];
+
+              packages = (with pkgs; [
+                cargo-edit
+                cargo-watch
+                cargo-nextest
+              ]) ++ [ fenixPkgs.rust-analyzer ];
+
+              env = {
+                RUST_BACKTRACE = "1";
+                CARGO_BUILD_TARGET = crossTarget;
+                "CARGO_TARGET_${crossEnvName}_LINKER" = "${zigLinker}";
+                PKG_CONFIG_PATH = "${linuxLibdrm.dev}/lib/pkgconfig";
+                PKG_CONFIG_SYSROOT_DIR = "${linuxLibdrm.dev}";
+                PKG_CONFIG_ALLOW_CROSS = "1";
+              };
+            };
+        in
+        {
+          devShells.default = if isDarwin then darwinCrossShell else linuxNativeShell;
+
           formatter = pkgs.nixpkgs-fmt;
+        } // pkgs.lib.optionalAttrs (!isDarwin) {
+          packages.default = pkgs.callPackage ./dist/nix/default.nix { };
         }
       );
     in
