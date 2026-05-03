@@ -53,6 +53,7 @@ pub struct UiState {
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
     EnterPin,
+    #[allow(dead_code)]
     Confirm,
     WrongPin,
     Verifying,
@@ -140,6 +141,7 @@ pub fn render(frame: &mut Frame<'_>, state: &UiState) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::suboptimal_flops)]
 fn draw_dot_row(pix: &mut Pixmap, cx: f32, cy: f32, pin_len: usize) {
     const VISIBLE_MAX: usize = 16;
     let radius = 11.0_f32;
@@ -160,6 +162,7 @@ fn draw_dot_row(pix: &mut Pixmap, cx: f32, cy: f32, pin_len: usize) {
     }
 }
 
+#[allow(clippy::many_single_char_names)]
 fn fill_rounded(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, color: Color) {
     let r = r.min(w * 0.5).min(h * 0.5).max(0.0);
     let mut pb = PathBuilder::new();
@@ -206,7 +209,13 @@ enum Align {
     Left,
 }
 
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::suboptimal_flops,
+)]
 fn draw_text(pix: &mut Pixmap, text: &str, x: f32, y: f32, scale: u32, color: Color, align: Align) {
     let scale = scale.max(1);
     let glyph_w = font5x7::WIDTH * scale as usize;
@@ -259,6 +268,11 @@ mod font5x7 {
     pub const WIDTH: usize = 5;
     pub const HEIGHT: usize = 7;
 
+    #[allow(
+        clippy::cast_possible_wrap,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+    )]
     pub fn blit_glyph(pix: &mut Pixmap, x: i32, y: i32, ch: char, scale: i32, color: Color) {
         let glyph = lookup(ch);
         let pixmap_w = pix.width() as i32;
@@ -278,7 +292,6 @@ mod font5x7 {
                         if px < 0 || py < 0 || px >= pixmap_w || py >= pixmap_h {
                             continue;
                         }
-                        #[allow(clippy::cast_sign_loss)]
                         let idx = (py * pixmap_w + px) as usize;
                         raw[idx] = pre;
                     }
@@ -287,7 +300,7 @@ mod font5x7 {
         }
     }
 
-    fn lookup(ch: char) -> [u8; 5] {
+    const fn lookup(ch: char) -> [u8; 5] {
         let upper = ch.to_ascii_uppercase();
         match upper {
             ' ' => [0; 5],

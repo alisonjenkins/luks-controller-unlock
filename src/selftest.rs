@@ -95,7 +95,7 @@ fn check_cryptsetup_version() -> Result<()> {
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
     let line = stdout.lines().next().unwrap_or("(unknown)");
-    let version = line.trim().split_whitespace().last().unwrap_or("?");
+    let version = line.split_whitespace().last().unwrap_or("?");
     if let Some((major, minor)) = parse_major_minor(version) {
         if (major, minor) < (2, 6) {
             return Err(Error::Cryptsetup(format!(
@@ -103,13 +103,12 @@ fn check_cryptsetup_version() -> Result<()> {
             )));
         }
         info!("pass: cryptsetup {version}");
-        Ok(())
     } else {
         warn!(
             "fail: cryptsetup version line did not parse: {line:?}; assuming OK"
         );
-        Ok(())
     }
+    Ok(())
 }
 
 fn parse_major_minor(s: &str) -> Option<(u32, u32)> {

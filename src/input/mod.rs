@@ -1,7 +1,7 @@
 //! Controller input via evdev.
 //!
 //! v1: single-device. Opens the first device on `/dev/input/event*` that
-//! advertises BTN_SOUTH. Multi-device + udev hot-plug is a follow-up.
+//! advertises `BTN_SOUTH`. Multi-device + udev hot-plug is a follow-up.
 //!
 //! Emits a stream of canonical events to the caller. Implements the
 //! B-hold-for-backspace state machine internally so callers do not need
@@ -27,7 +27,7 @@ use tables::{
     scale_trigger_thresholds,
 };
 
-/// Hold time after which BTN_EAST counts as backspace instead of B.
+/// Hold time after which `BTN_EAST` counts as backspace instead of B.
 pub const BACKSPACE_HOLD: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy)]

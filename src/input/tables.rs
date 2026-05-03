@@ -2,7 +2,7 @@
 //!
 //! Codes follow `linux/input-event-codes.h`. The mapping is generic for
 //! all controllers that present themselves as a standard gamepad through
-//! the kernel (Xbox via xpad, DualShock 4 via hid-sony, DualSense via
+//! the kernel (Xbox via xpad, `DualShock` 4 via hid-sony, `DualSense` via
 //! hid-playstation, Switch Pro via hid-nintendo, 8BitDo Pro 2 via xpad,
 //! Steam Controller via hid-steam). Per-controller overrides can be
 //! added later without changing the Pin alphabet.
@@ -21,10 +21,14 @@ pub const BTN_TL: u16 = 0x136; // LB
 pub const BTN_TR: u16 = 0x137; // RB
 pub const BTN_TL2: u16 = 0x138; // LT (some controllers report as button)
 pub const BTN_TR2: u16 = 0x139; // RT (some controllers report as button)
+#[allow(dead_code)]
 pub const BTN_SELECT: u16 = 0x13a;
 pub const BTN_START: u16 = 0x13b; // SUBMIT
+#[allow(dead_code)]
 pub const BTN_MODE: u16 = 0x13c;
+#[allow(dead_code)]
 pub const BTN_THUMBL: u16 = 0x13d;
+#[allow(dead_code)]
 pub const BTN_THUMBR: u16 = 0x13e;
 pub const BTN_DPAD_UP: u16 = 0x220;
 pub const BTN_DPAD_DOWN: u16 = 0x221;
@@ -68,10 +72,10 @@ pub const fn scale_trigger_thresholds(min: i32, max: i32) -> (i32, i32) {
 
 /// Map a KEY_* code to a canonical button, if any.
 ///
-/// Returns `None` for keys that are control inputs (START, BTN_EAST when
+/// Returns `None` for keys that are control inputs (START, `BTN_EAST` when
 /// the caller is implementing the B-hold-for-backspace state machine), or
 /// for keys that are not part of the canonical alphabet.
-pub fn key_to_canonical(code: u16) -> Option<CanonicalButton> {
+pub const fn key_to_canonical(code: u16) -> Option<CanonicalButton> {
     match code {
         BTN_SOUTH => Some(CanonicalButton::A),
         BTN_EAST => Some(CanonicalButton::B),

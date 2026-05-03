@@ -34,7 +34,7 @@ pub struct TestArgs {
     pub no_input: bool,
 }
 
-pub fn run_test(args: TestArgs) -> Result<()> {
+pub fn run_test(args: &TestArgs) -> Result<()> {
     info!(card = %args.card.display(), "test-ui: starting");
     let mut surface = drm::DrmSurface::open(&args.card)?;
     info!(width = surface.width(), height = surface.height(), "test-ui: surface ready");
@@ -81,20 +81,13 @@ pub fn run_test(args: TestArgs) -> Result<()> {
         }
         let event = ctrl.next_event(timeout.or(Some(Duration::from_millis(500))))?;
         let dirty = match event {
-            Some(InputEvent::Press(b)) => {
-                if pin.push(b).is_ok() {
-                    state.pin_len = pin.len();
-                    true
-                } else {
-                    false
-                }
+            Some(InputEvent::Press(b)) if pin.push(b).is_ok() => {
+                state.pin_len = pin.len();
+                true
             }
-            Some(InputEvent::Backspace) => {
-                let changed = pin.pop().is_some();
-                if changed {
-                    state.pin_len = pin.len();
-                }
-                changed
+            Some(InputEvent::Backspace) if pin.pop().is_some() => {
+                state.pin_len = pin.len();
+                true
             }
             Some(InputEvent::Submit) => {
                 info!("test-ui: submit pressed (len={})", pin.len());
@@ -103,7 +96,7 @@ pub fn run_test(args: TestArgs) -> Result<()> {
                 }
                 false
             }
-            None => false,
+            _ => false,
         };
         if dirty {
             let mut frame = surface.frame()?;

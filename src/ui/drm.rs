@@ -50,9 +50,7 @@ struct SavedCrtc {
 #[derive(Debug)]
 pub struct DrmSurface {
     card: Card,
-    crtc: crtc::Handle,
     connector: connector::Handle,
-    mode: Mode,
     width: u32,
     height: u32,
     fb: framebuffer::Handle,
@@ -116,9 +114,7 @@ impl DrmSurface {
         debug!("drm: surface ready");
         Ok(Self {
             card,
-            crtc: crtc_handle,
             connector: connector.handle(),
-            mode,
             width,
             height,
             fb,
@@ -127,10 +123,10 @@ impl DrmSurface {
         })
     }
 
-    pub fn width(&self) -> u32 {
+    pub const fn width(&self) -> u32 {
         self.width
     }
-    pub fn height(&self) -> u32 {
+    pub const fn height(&self) -> u32 {
         self.height
     }
 
@@ -198,27 +194,23 @@ impl Frame<'_> {
         self.map.as_mut()
     }
 
-    pub fn width(&self) -> u32 {
+    pub const fn width(&self) -> u32 {
         self.width
     }
-    pub fn height(&self) -> u32 {
+    pub const fn height(&self) -> u32 {
         self.height
     }
-    pub fn stride(&self) -> u32 {
+    pub const fn stride(&self) -> u32 {
         self.stride
     }
 }
 
 fn pick_connector(card: &Card, res: &ResourceHandles) -> Result<(connector::Info, Mode)> {
-    let connectors: Vec<connector::Info> = res
+    let chosen = res
         .connectors()
         .iter()
         .filter_map(|c| card.get_connector(*c, true).ok())
         .filter(|c| c.state() == connector::State::Connected)
-        .collect();
-
-    let chosen = connectors
-        .into_iter()
         .find(|c| !c.modes().is_empty())
         .ok_or(Error::NoDrmConnector)?;
 

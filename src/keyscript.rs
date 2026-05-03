@@ -27,7 +27,7 @@ use crate::ui::render::{self, Message, UiState};
 
 #[derive(Parser, Debug)]
 pub struct Args {
-    /// Override the device name shown on the prompt (defaults to $CRYPTTAB_NAME).
+    /// Override the device name shown on the prompt (defaults to `$CRYPTTAB_NAME`).
     #[arg(long)]
     pub name: Option<String>,
 
@@ -104,20 +104,16 @@ fn collect_pin(
         let event = controller.next_event(None)?;
         let mut dirty = false;
         match event {
-            Some(InputEvent::Press(b)) => {
-                if pin.push(b).is_ok() {
-                    state.pin_len = pin.len();
-                    dirty = true;
-                }
+            Some(InputEvent::Press(b)) if pin.push(b).is_ok() => {
+                state.pin_len = pin.len();
+                dirty = true;
             }
-            Some(InputEvent::Backspace) => {
-                if pin.pop().is_some() {
-                    state.pin_len = pin.len();
-                    dirty = true;
-                }
+            Some(InputEvent::Backspace) if pin.pop().is_some() => {
+                state.pin_len = pin.len();
+                dirty = true;
             }
             Some(InputEvent::Submit) => return Ok(pin),
-            None => {}
+            _ => {}
         }
         if dirty {
             redraw(surface, state)?;
@@ -131,15 +127,13 @@ fn open_controller_with_banner(
 ) -> Result<Controller> {
     use std::time::Duration;
     loop {
-        match Controller::open_first() {
-            Ok(c) => return Ok(c),
-            Err(_) => {
-                state.controller_ok = false;
-                state.message = Some(Message::PluginController);
-                redraw(surface, state)?;
-                std::thread::sleep(Duration::from_secs(1));
-            }
+        if let Ok(c) = Controller::open_first() {
+            return Ok(c);
         }
+        state.controller_ok = false;
+        state.message = Some(Message::PluginController);
+        redraw(surface, state)?;
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 

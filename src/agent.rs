@@ -8,7 +8,7 @@
 //!      banner if none is connected);
 //!   3. open a DRM/KMS surface and drive the unlock UI;
 //!   4. when START is pressed, encode the PIN to a passphrase and
-//!      reply over the AF_UNIX socket;
+//!      reply over the `AF_UNIX` socket;
 //!   5. tear down DRM and re-arm.
 //!
 //! The first agent to reply wins, which means our agent and the stock
@@ -21,14 +21,13 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use inotify::{Inotify, WatchMask};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
 use crate::error::{Error, Result};
 use crate::input::{Controller, InputEvent};
@@ -38,7 +37,7 @@ use crate::ui::render::{Message, UiState};
 use crate::ui::render;
 
 const POLL_TIMEOUT: Duration = Duration::from_millis(500);
-/// Initial back-off after a wrong PIN, doubled up to LOCKOUT_MAX.
+/// Initial back-off after a wrong PIN, doubled up to `LOCKOUT_MAX`.
 const LOCKOUT_INITIAL: Duration = Duration::from_secs(1);
 const LOCKOUT_MAX: Duration = Duration::from_secs(30);
 
@@ -53,7 +52,7 @@ pub struct Args {
     pub card: PathBuf,
 }
 
-pub fn run(args: Args) -> Result<()> {
+pub fn run(args: &Args) -> Result<()> {
     info!(watch_dir = %args.watch_dir.display(), card = %args.card.display(), "agent: starting");
 
     if !args.watch_dir.exists() {
@@ -63,13 +62,13 @@ pub fn run(args: Args) -> Result<()> {
         )));
     }
 
-    let mut inot = Inotify::init().map_err(|e| Error::Io(e))?;
+    let mut inot = Inotify::init().map_err(Error::Io)?;
     inot.watches()
         .add(
             &args.watch_dir,
             WatchMask::CREATE | WatchMask::MOVED_TO,
         )
-        .map_err(|e| Error::Io(e))?;
+        .map_err(Error::Io)?;
 
     let mut handled = std::collections::HashSet::<PathBuf>::new();
     let mut lockout = LOCKOUT_INITIAL;
@@ -114,10 +113,7 @@ fn process_pending(
     handled: &mut std::collections::HashSet<PathBuf>,
     lockout: &mut Duration,
 ) -> Result<()> {
-    let read = match fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(e) => return Err(Error::Io(e)),
-    };
+    let read = fs::read_dir(dir).map_err(Error::Io)?;
     for entry in read.flatten() {
         let path = entry.path();
         if !is_ask_file(&path) || handled.contains(&path) {
@@ -155,17 +151,13 @@ fn process_request(path: &Path, card: &Path, lockout: &mut Duration) -> Result<(
             .unwrap_or(None);
         let mut dirty = false;
         match event {
-            Some(InputEvent::Press(b)) => {
-                if pin.push(b).is_ok() {
-                    state.pin_len = pin.len();
-                    dirty = true;
-                }
+            Some(InputEvent::Press(b)) if pin.push(b).is_ok() => {
+                state.pin_len = pin.len();
+                dirty = true;
             }
-            Some(InputEvent::Backspace) => {
-                if pin.pop().is_some() {
-                    state.pin_len = pin.len();
-                    dirty = true;
-                }
+            Some(InputEvent::Backspace) if pin.pop().is_some() => {
+                state.pin_len = pin.len();
+                dirty = true;
             }
             Some(InputEvent::Submit) => {
                 if pin.is_empty() {
@@ -193,7 +185,7 @@ fn process_request(path: &Path, card: &Path, lockout: &mut Duration) -> Result<(
                 state.message = Some(Message::EnterPin);
                 dirty = true;
             }
-            None => {}
+            _ => {}
         }
         if dirty {
             redraw(&mut surface, &state)?;
@@ -211,15 +203,13 @@ fn open_controller_with_banner(
     state: &mut UiState,
 ) -> Result<Controller> {
     loop {
-        match Controller::open_first() {
-            Ok(c) => return Ok(c),
-            Err(_) => {
-                state.controller_ok = false;
-                state.message = Some(Message::PluginController);
-                redraw(surface, state)?;
-                std::thread::sleep(Duration::from_secs(1));
-            }
+        if let Ok(c) = Controller::open_first() {
+            return Ok(c);
         }
+        state.controller_ok = false;
+        state.message = Some(Message::PluginController);
+        redraw(surface, state)?;
+        std::thread::sleep(Duration::from_secs(1));
     }
 }
 

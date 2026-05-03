@@ -15,6 +15,7 @@ pub enum Error {
     PinMismatch,
 
     #[error("evdev code does not map to a canonical button")]
+    #[allow(dead_code)]
     UnknownButton,
 
     #[error("no DRM card with a connected output")]

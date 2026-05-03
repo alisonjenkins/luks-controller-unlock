@@ -27,6 +27,7 @@ pub enum CanonicalButton {
 }
 
 impl CanonicalButton {
+    #[allow(dead_code)]
     pub const ALL: [Self; 12] = [
         Self::A,
         Self::B,
@@ -47,7 +48,8 @@ impl CanonicalButton {
         self as u8
     }
 
-    pub fn try_from_char(c: u8) -> Result<Self> {
+    #[allow(dead_code)]
+    pub const fn try_from_char(c: u8) -> Result<Self> {
         match c {
             b'a' => Ok(Self::A),
             b'b' => Ok(Self::B),
@@ -119,6 +121,7 @@ impl Pin {
         self.buttons.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn buttons(&self) -> &[CanonicalButton] {
         &self.buttons
     }
@@ -128,6 +131,7 @@ impl Pin {
         self.buttons.iter().map(|b| b.as_char()).collect()
     }
 
+    #[allow(dead_code)]
     pub fn from_passphrase(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_PIN_LEN {
             return Err(Error::PinTooLong { max: MAX_PIN_LEN });

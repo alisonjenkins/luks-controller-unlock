@@ -62,10 +62,10 @@ fn run(cli: Cli) -> Result<()> {
     install_tracing(cli.verbose);
     match cli.command {
         Command::Enroll(args) => enroll::run(args),
-        Command::Agent(args) => agent::run(args),
+        Command::Agent(args) => agent::run(&args),
         Command::Keyscript(args) => keyscript::run(args),
         Command::Selftest => selftest::run(),
-        Command::TestUi(args) => ui::run_test(args),
+        Command::TestUi(args) => ui::run_test(&args),
         Command::TestInput => input::run_test(),
     }
 }
