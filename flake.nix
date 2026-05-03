@@ -14,7 +14,7 @@
     let
       perSystem = flake-utils.lib.eachDefaultSystem (system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = nixpkgs.legacyPackages.${system};
           toolchain = fenix.packages.${system}.stable.toolchain;
         in
         {
@@ -26,8 +26,6 @@
             nativeBuildInputs = with pkgs; [
               toolchain
               pkg-config
-              gcc
-              binutils
               cmake
             ];
 
@@ -44,17 +42,7 @@
               rust-analyzer
             ];
 
-            env = {
-              RUST_BACKTRACE = "1";
-              PKG_CONFIG_PATH = "${pkgs.libdrm.dev}/lib/pkgconfig:${pkgs.systemdMinimal.dev}/lib/pkgconfig";
-              LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
-            };
-
-            shellHook = ''
-              echo "luks-controller-unlock dev shell"
-              echo "  rustc: $(rustc --version)"
-              echo "  cargo: $(cargo --version)"
-            '';
+            env.RUST_BACKTRACE = "1";
           };
 
           formatter = pkgs.nixpkgs-fmt;
