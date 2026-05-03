@@ -1,5 +1,12 @@
 # Setup — Arch Linux (mkinitcpio)
 
+> ⚠️ **Untested on Arch.** This tool is new. The procedure below is
+> the *intended* path on Arch with `sd-encrypt`; it has not yet been
+> end-to-end booted by the author. Treat it as a recipe to verify,
+> not a known-good playbook. Climb [`TESTING.md`](../../TESTING.md)
+> before installing anything in initrd and keep your keyboard keyslot
+> intact as the recovery path.
+
 mkinitcpio + `sd-encrypt` initrd. Agent path uses the systemd
 ask-password protocol.
 

@@ -1,5 +1,11 @@
 # Shared setup notes
 
+> ⚠️ **This tool is new.** No per-distro guide here has been
+> end-to-end booted by the author across every covered distro yet.
+> Treat each guide as the *intended* path, not a known-good playbook.
+> Climb [`TESTING.md`](../../TESTING.md) before installing anything in
+> initrd, and keep your keyboard keyslot intact as the recovery path.
+
 These steps are referenced from each per-distro guide. Read them once.
 
 ## Prerequisites (all distros)

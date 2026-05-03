@@ -1,5 +1,13 @@
 # Setup — Debian / Ubuntu (initramfs-tools)
 
+> ⚠️ **Untested on Debian / Ubuntu.** This tool is new. The procedure
+> below is the *intended* path through the `keyscript=` hook on
+> initramfs-tools; it has not yet been end-to-end booted by the
+> author. Treat it as a recipe to verify, not a known-good playbook.
+> Climb [`TESTING.md`](../../TESTING.md) before installing anything
+> in initrd and keep your keyboard keyslot intact as the recovery
+> path.
+
 Debian and Ubuntu use initramfs-tools, which does **not** run systemd
 in stage 1. The systemd ask-password protocol our agent normally uses
 is therefore not available. Integration on this distro goes through

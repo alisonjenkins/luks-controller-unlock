@@ -1,5 +1,14 @@
 # Setup — NixOS
 
+> ⚠️ **Untested on NixOS.** This tool is new. The procedure below is
+> the *intended* path on NixOS with systemd stage 1; it has not yet
+> been end-to-end booted by the author. Treat it as a recipe to
+> verify, not a known-good playbook. Climb
+> [`TESTING.md`](../../TESTING.md) before rebuilding a real host and
+> keep your keyboard keyslot intact as the recovery path. Generations
+> are your friend — do not garbage-collect the previous one until the
+> new one has booted cleanly several times.
+
 systemd stage 1 initrd. Agent path uses the systemd ask-password
 protocol.
 

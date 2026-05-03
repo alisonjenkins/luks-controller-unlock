@@ -1,39 +1,45 @@
 # luks-controller-unlock
 
-Unlock LUKS2 root filesystems with a game controller. For living-room PCs,
-Steam Decks, and Steam Machines.
+Unlock LUKS2 root filesystems with a game controller. Built primarily
+for Steam Machines and the Steam Deck — also useful on any HTPC with a
+paired controller.
 
-> Status: greenfield. Compiles, 19 unit tests pass, all entry points
-> wired end-to-end. Not yet booted on every supported distro. Work
-> through [`TESTING.md`](TESTING.md) before enrolling on a real disk.
+> **Status: new and largely unproven.** Compiles, 19 unit tests pass,
+> all entry points wired end-to-end. The agent has **not** yet been
+> booted end-to-end on every supported distro — the per-distro guides
+> in [`docs/install/`](docs/install/) are *intended* recipes, not
+> known-good playbooks. Work through [`TESTING.md`](TESTING.md) before
+> enrolling on any real disk, and keep your keyboard keyslot as the
+> recovery path.
 
 ---
 
 ## Why
 
-Living-room machines are HTPCs. They sit in a media unit, plugged into
-a TV. The keyboard either lives in a drawer or doesn't exist at all.
-Asking a guest — or your future tired self at 11pm — to fish out a USB
-keyboard, plug it in, type a 30-character LUKS passphrase blind into
-the boot prompt, then put the keyboard away again, is the friction
-that pushes people to one of two bad choices:
+A Steam Deck or Steam Machine has a LUKS root and no comfortable way
+to type a long passphrase at boot. The Deck has no built-in keyboard;
+a Steam Machine sits under a TV with the keyboard, if there is one,
+in a drawer. Asking yourself — or a less-technical household member —
+to dock a USB keyboard and type 30 characters blind into the boot
+prompt every cold boot is the friction that pushes people to one of
+two bad choices:
 
-1. Run the box unencrypted because "it's just media".
+1. Run the box unencrypted because "it's just a games box".
 2. Use a 6-character passphrase because anything longer is unusable
-   on a TV.
+   on a couch.
 
-Neither is good. The Steam Deck, Steam Machines, and any HTPC ship
-with a perfectly capable input device already paired and within reach:
-the controller. This tool lets you use it as the unlock device while
-keeping a real keyboard passphrase as a fallback for any other
-keyslot.
+Neither is good. Same story on any HTPC with a controller already
+paired. The fix is to use the input device that's already there: the
+controller. This tool lets you unlock with a controller PIN while
+keeping your existing keyboard passphrase intact as the recovery path.
 
 Threat model: defends against opportunistic theft and casual access by
-a houseguest. Brute-force resistance comes from LUKS2's built-in
-Argon2id KDF (the same KDF that protects keyboard passphrases) so a
-PIN with a few buttons of entropy is meaningfully expensive to attack
-offline. It's not a substitute for a TPM-sealed key on hardware that
-has one.
+a houseguest. The controller PIN is registered as an ordinary LUKS2
+keyslot via `cryptsetup luksAddKey` — no new crypto, no custom KDF.
+Brute-force resistance is whatever Argon2id gives you, the same KDF
+that protects keyboard passphrases; a PIN with a few buttons of
+entropy is meaningfully expensive to attack offline. Your existing
+keyboard passphrase keyslot is left untouched as the recovery path.
 
 ---
 

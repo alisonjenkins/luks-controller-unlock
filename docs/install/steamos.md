@@ -1,5 +1,13 @@
 # Setup — SteamOS (Steam Deck / Steam Machine)
 
+> ⚠️ **Untested on SteamOS.** This tool is new. The procedure below
+> is the *intended* path on SteamOS; it has not yet been end-to-end
+> booted on a Deck or Steam Machine by the author. Treat it as a
+> recipe to verify, not a known-good playbook. SteamOS in a VM is
+> awkward, so verification means bare-metal — read
+> [`TESTING.md`](../../TESTING.md) before installing initrd packaging
+> and keep the keyboard keyslot intact as the recovery path.
+
 dracut + systemd initrd. Agent path uses the systemd ask-password
 protocol; no `keyscript=` involved.
 
