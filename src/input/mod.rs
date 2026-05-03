@@ -21,8 +21,10 @@ use crate::pin::CanonicalButton;
 pub mod tables;
 
 use tables::{
-    ABS_HAT0X, ABS_HAT0Y, ABS_RZ, ABS_Z, BTN_EAST, BTN_SOUTH, BTN_START,
+    ABS_HAT0X, ABS_HAT0Y, ABS_RZ, ABS_Z, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
+    BTN_DPAD_UP, BTN_EAST, BTN_SOUTH, BTN_START, BTN_TL2, BTN_TR2,
     TRIGGER_PRESS_THRESHOLD, TRIGGER_RELEASE_THRESHOLD, key_to_canonical,
+    scale_trigger_thresholds,
 };
 
 /// Hold time after which BTN_EAST counts as backspace instead of B.
@@ -57,9 +59,35 @@ enum BState {
 pub struct Controller {
     pub name: String,
     pub path: String,
+    pub caps: Capabilities,
     device: evdev::Device,
     axis: AxisState,
     b: BState,
+}
+
+/// Resolved per-device input dispatch choices.
+///
+/// Drivers vary in whether they expose a trigger as an analog axis, a
+/// digital button, or both. To keep the canonical PIN byte sequence
+/// stable across drivers we pick exactly one source per logical input
+/// at device open and ignore the other to avoid double-emit.
+#[derive(Debug, Clone, Copy)]
+pub struct Capabilities {
+    /// True if `ABS_Z` is supported and is the chosen LT source.
+    pub lt_uses_axis: bool,
+    /// True if `ABS_RZ` is supported and is the chosen RT source.
+    pub rt_uses_axis: bool,
+    /// True if `ABS_HAT0X`/`ABS_HAT0Y` is supported and is the chosen
+    /// d-pad source.
+    pub dpad_uses_hat: bool,
+    /// Press threshold for `ABS_Z`, scaled to the reported axis range.
+    pub lt_press_threshold: i32,
+    /// Release threshold for `ABS_Z`, scaled to the reported axis range.
+    pub lt_release_threshold: i32,
+    /// Press threshold for `ABS_RZ`, scaled to the reported axis range.
+    pub rt_press_threshold: i32,
+    /// Release threshold for `ABS_RZ`, scaled to the reported axis range.
+    pub rt_release_threshold: i32,
 }
 
 impl Controller {
@@ -72,10 +100,20 @@ impl Controller {
             }
             let name = dev.name().unwrap_or("(unnamed)").to_owned();
             let path_s = path.display().to_string();
-            info!(path = %path_s, name = %name, "input: opened controller");
+            let caps = probe_capabilities(&dev);
+            info!(
+                path = %path_s, name = %name,
+                lt_axis = caps.lt_uses_axis,
+                rt_axis = caps.rt_uses_axis,
+                dpad_hat = caps.dpad_uses_hat,
+                lt_press = caps.lt_press_threshold,
+                rt_press = caps.rt_press_threshold,
+                "input: opened controller"
+            );
             return Ok(Self {
                 name,
                 path: path_s,
+                caps,
                 device: dev,
                 axis: AxisState::default(),
                 b: BState::Idle,
@@ -146,6 +184,25 @@ impl Controller {
             return self.handle_b_event(value);
         }
 
+        // Suppress digital trigger / d-pad sources when the analog/HAT
+        // source is the chosen one for this device. Without this, a
+        // driver that emits both would produce two `Press` events per
+        // actuation and the canonical PIN byte sequence would diverge
+        // from a single-source driver.
+        if (code == BTN_TL2 && self.caps.lt_uses_axis)
+            || (code == BTN_TR2 && self.caps.rt_uses_axis)
+        {
+            return None;
+        }
+        if self.caps.dpad_uses_hat
+            && matches!(
+                code,
+                BTN_DPAD_UP | BTN_DPAD_DOWN | BTN_DPAD_LEFT | BTN_DPAD_RIGHT
+            )
+        {
+            return None;
+        }
+
         if value == 1 {
             return key_to_canonical(code).map(InputEvent::Press);
         }
@@ -172,25 +229,35 @@ impl Controller {
 
     fn handle_abs(&mut self, code: u16, value: i32) -> Option<InputEvent> {
         match code {
-            ABS_Z => self.handle_trigger(value, /* left */ true),
-            ABS_RZ => self.handle_trigger(value, /* left */ false),
-            ABS_HAT0X => self.handle_hat_x(value),
-            ABS_HAT0Y => self.handle_hat_y(value),
+            ABS_Z if self.caps.lt_uses_axis => self.handle_trigger(value, /* left */ true),
+            ABS_RZ if self.caps.rt_uses_axis => self.handle_trigger(value, /* left */ false),
+            ABS_HAT0X if self.caps.dpad_uses_hat => self.handle_hat_x(value),
+            ABS_HAT0Y if self.caps.dpad_uses_hat => self.handle_hat_y(value),
             _ => None,
         }
     }
 
     fn handle_trigger(&mut self, value: i32, left: bool) -> Option<InputEvent> {
-        let (held, button) = if left {
-            (&mut self.axis.lt_held, CanonicalButton::Lt)
+        let (held, button, press, release) = if left {
+            (
+                &mut self.axis.lt_held,
+                CanonicalButton::Lt,
+                self.caps.lt_press_threshold,
+                self.caps.lt_release_threshold,
+            )
         } else {
-            (&mut self.axis.rt_held, CanonicalButton::Rt)
+            (
+                &mut self.axis.rt_held,
+                CanonicalButton::Rt,
+                self.caps.rt_press_threshold,
+                self.caps.rt_release_threshold,
+            )
         };
-        if !*held && value >= TRIGGER_PRESS_THRESHOLD {
+        if !*held && value >= press {
             *held = true;
             return Some(InputEvent::Press(button));
         }
-        if *held && value <= TRIGGER_RELEASE_THRESHOLD {
+        if *held && value <= release {
             *held = false;
         }
         None
@@ -239,6 +306,47 @@ fn clamp_ms(d: Duration) -> i32 {
 fn is_gamepad(dev: &evdev::Device) -> bool {
     dev.supported_keys()
         .is_some_and(|keys| keys.contains(evdev::KeyCode::new(BTN_SOUTH)))
+}
+
+/// Resolve which input source the device exposes for each logical
+/// trigger and the d-pad, and scale trigger thresholds to the reported
+/// axis range. Falls back to the historical 0..=255 constants when the
+/// kernel does not provide an `AbsInfo` (rare; should not happen for
+/// standard HID gamepads).
+fn probe_capabilities(dev: &evdev::Device) -> Capabilities {
+    let abs_axes = dev.supported_absolute_axes();
+    let supports_abs = |code: u16| {
+        abs_axes.is_some_and(|set| set.contains(evdev::AbsoluteAxisCode(code)))
+    };
+    let lt_uses_axis = supports_abs(ABS_Z);
+    let rt_uses_axis = supports_abs(ABS_RZ);
+    let dpad_uses_hat = supports_abs(ABS_HAT0X) || supports_abs(ABS_HAT0Y);
+
+    let abs_info: Vec<(evdev::AbsoluteAxisCode, evdev::AbsInfo)> = dev
+        .get_absinfo()
+        .map(Iterator::collect)
+        .unwrap_or_default();
+    let range_for = |code: u16| -> Option<(i32, i32)> {
+        abs_info
+            .iter()
+            .find(|(c, _)| c.0 == code)
+            .map(|(_, info)| (info.minimum(), info.maximum()))
+    };
+    let fallback = (TRIGGER_PRESS_THRESHOLD, TRIGGER_RELEASE_THRESHOLD);
+    let (lt_press, lt_release) = range_for(ABS_Z)
+        .map_or(fallback, |(lo, hi)| scale_trigger_thresholds(lo, hi));
+    let (rt_press, rt_release) = range_for(ABS_RZ)
+        .map_or(fallback, |(lo, hi)| scale_trigger_thresholds(lo, hi));
+
+    Capabilities {
+        lt_uses_axis,
+        rt_uses_axis,
+        dpad_uses_hat,
+        lt_press_threshold: lt_press,
+        lt_release_threshold: lt_release,
+        rt_press_threshold: rt_press,
+        rt_release_threshold: rt_release,
+    }
 }
 
 /// `luks-controller-unlock test-input`: print canonical events as they arrive.

@@ -55,6 +55,19 @@ fn check_controller() -> Result<()> {
     match Controller::open_first() {
         Ok(c) => {
             info!("pass: controller detected: {} ({})", c.name, c.path);
+            info!(
+                "    sources: lt={} rt={} dpad={}",
+                trigger_source(c.caps.lt_uses_axis),
+                trigger_source(c.caps.rt_uses_axis),
+                if c.caps.dpad_uses_hat { "hat" } else { "buttons" },
+            );
+            info!(
+                "    thresholds: lt press/release = {}/{}, rt press/release = {}/{}",
+                c.caps.lt_press_threshold,
+                c.caps.lt_release_threshold,
+                c.caps.rt_press_threshold,
+                c.caps.rt_release_threshold,
+            );
             Ok(())
         }
         Err(e) => {
@@ -63,6 +76,10 @@ fn check_controller() -> Result<()> {
             Err(e)
         }
     }
+}
+
+const fn trigger_source(uses_axis: bool) -> &'static str {
+    if uses_axis { "axis" } else { "button" }
 }
 
 fn check_cryptsetup_version() -> Result<()> {

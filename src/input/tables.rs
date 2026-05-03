@@ -38,9 +38,33 @@ pub const ABS_HAT0X: u16 = 0x10; // dpad horizontal: -1 = left, +1 = right
 pub const ABS_HAT0Y: u16 = 0x11; // dpad vertical:   -1 = up,   +1 = down
 
 /// Trigger-axis press threshold. Triggers report 0..=255 on most controllers.
+/// Used as a fallback when the kernel does not provide an `AbsInfo` range.
 pub const TRIGGER_PRESS_THRESHOLD: i32 = 64;
 /// Hysteresis for trigger release so a held trigger doesn't chatter.
 pub const TRIGGER_RELEASE_THRESHOLD: i32 = 32;
+
+/// Compute press / release thresholds from an axis range.
+///
+/// Press fires at 25% of range above `min`, release at 12% above `min`.
+/// Result is always `release < press` and both are within `[min, max]`.
+/// For the canonical 0..=255 case this yields `(64, 31)` which is one
+/// off from the historical fallback constants — close enough that PIN
+/// portability across drivers reporting the same axis range is
+/// preserved while still scaling correctly for non-standard ranges.
+pub const fn scale_trigger_thresholds(min: i32, max: i32) -> (i32, i32) {
+    let raw_range = max.saturating_sub(min);
+    let range = if raw_range < 1 { 1 } else { raw_range };
+    let press_raw = min.saturating_add(range / 4);
+    let press = if press_raw > max { max } else { press_raw };
+    let release_raw = min.saturating_add(range / 8);
+    let press_minus_one = press.saturating_sub(1);
+    let release = if release_raw > press_minus_one {
+        press_minus_one
+    } else {
+        release_raw
+    };
+    (press, release)
+}
 
 /// Map a KEY_* code to a canonical button, if any.
 ///
@@ -104,5 +128,42 @@ mod tests {
         for code in [0u16, 1, 0x100, 0x140, 0xfff] {
             assert_eq!(key_to_canonical(code), None);
         }
+    }
+
+    #[test]
+    fn scale_thresholds_default_range() {
+        // 0..=255 — matches the historical fallback within 1.
+        let (press, release) = scale_trigger_thresholds(0, 255);
+        assert_eq!(press, 63);
+        assert_eq!(release, 31);
+        assert!(release < press);
+    }
+
+    #[test]
+    fn scale_thresholds_signed_range() {
+        // -32768..=32767 — full i16 span, no overflow.
+        let (press, release) = scale_trigger_thresholds(-32768, 32767);
+        let range = 32767i32 - (-32768i32);
+        assert_eq!(press, -32768 + range / 4);
+        assert_eq!(release, -32768 + range / 8);
+        assert!(release < press);
+        assert!(press <= 32767);
+    }
+
+    #[test]
+    fn scale_thresholds_release_strictly_less_than_press() {
+        for (lo, hi) in [(0, 1), (0, 7), (10, 11), (-1, 1), (-100, -50)] {
+            let (press, release) = scale_trigger_thresholds(lo, hi);
+            assert!(release < press, "lo={lo} hi={hi} press={press} release={release}");
+            assert!(press <= hi);
+            assert!(release >= lo - 1);
+        }
+    }
+
+    #[test]
+    fn scale_thresholds_degenerate_range() {
+        // min == max: range clamps to 1, must not divide by zero.
+        let (press, release) = scale_trigger_thresholds(5, 5);
+        assert!(release < press);
     }
 }
