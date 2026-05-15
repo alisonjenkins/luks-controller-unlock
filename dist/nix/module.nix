@@ -67,7 +67,16 @@ in
       }
     ];
 
-    boot.initrd.kernelModules = cfg.extraKernelModules;
+    boot.initrd.kernelModules =
+      cfg.extraKernelModules
+      # vfat (and the NLS charmaps it pulls in) only needed when the
+      # debug log is going to a FAT-formatted ESP. nvme already comes
+      # in via the auto-detected hardware-configuration modules.
+      ++ lib.optionals (cfg.debugLogToEsp != null) [
+        "vfat"
+        "nls_cp437"
+        "nls_iso8859-1"
+      ];
 
     boot.initrd.systemd = {
       storePaths = [ "${cfg.package}/bin/luks-controller-unlock" ];
