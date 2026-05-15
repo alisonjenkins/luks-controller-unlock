@@ -99,6 +99,7 @@ impl std::fmt::Debug for Controller {
 /// stable across drivers we pick exactly one source per logical input
 /// at device open and ignore the other to avoid double-emit.
 #[derive(Debug, Clone, Copy)]
+#[allow(clippy::struct_excessive_bools)] // boolean caps describe orthogonal evdev features
 pub struct Capabilities {
     /// True if `ABS_Z` is supported and is the chosen LT source.
     pub lt_uses_axis: bool,
@@ -115,6 +116,12 @@ pub struct Capabilities {
     pub rt_press_threshold: i32,
     /// Release threshold for `ABS_RZ`, scaled to the reported axis range.
     pub rt_release_threshold: i32,
+    /// Swap canonical face-button mapping for `BTN_NORTH` and `BTN_WEST`.
+    /// Set when the device is a Steam Deck built-in controller running
+    /// under Valve's hid-steam fork (in `linux-*-valve1` kernels), which
+    /// reports physical Y as `BTN_WEST` and physical X as `BTN_NORTH` —
+    /// the inverse of the upstream Linux gamepad convention.
+    pub swap_north_west: bool,
 }
 
 impl Controller {
@@ -132,7 +139,14 @@ impl Controller {
             }
             let name = dev.name().unwrap_or("(unnamed)").to_owned();
             let path_s = path.display().to_string();
-            let caps = probe_capabilities(&dev);
+            let mut caps = probe_capabilities(&dev);
+            // Steam Deck's built-in controller under Valve's hid-steam
+            // fork swaps BTN_NORTH and BTN_WEST relative to upstream.
+            // Detect by name and flip the canonical mapping so a PIN
+            // enrolled here matches a PIN enrolled on a stock kernel.
+            if name == "Steam Deck" {
+                caps.swap_north_west = true;
+            }
             info!(
                 path = %path_s, name = %name,
                 lt_axis = caps.lt_uses_axis,
@@ -140,6 +154,7 @@ impl Controller {
                 dpad_hat = caps.dpad_uses_hat,
                 lt_press = caps.lt_press_threshold,
                 rt_press = caps.rt_press_threshold,
+                swap_nw = caps.swap_north_west,
                 "input: opened controller"
             );
             return Ok(Self {
@@ -276,7 +291,7 @@ impl Controller {
         }
 
         if value == 1 {
-            return key_to_canonical(code).map(InputEvent::Press);
+            return key_to_canonical(code, self.caps.swap_north_west).map(InputEvent::Press);
         }
         None
     }
@@ -442,6 +457,9 @@ fn probe_capabilities(dev: &evdev::Device) -> Capabilities {
         lt_release_threshold: lt_release,
         rt_press_threshold: rt_press,
         rt_release_threshold: rt_release,
+        // Caller (Controller::open_first) flips this on for "Steam Deck"
+        // devices; probe_capabilities has no name context.
+        swap_north_west: false,
     }
 }
 

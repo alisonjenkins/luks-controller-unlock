@@ -74,12 +74,26 @@ pub const fn scale_trigger_thresholds(min: i32, max: i32) -> (i32, i32) {
 /// Returns `None` for keys that are control inputs (START, `BTN_EAST` when
 /// the caller is implementing the B-hold-for-backspace state machine), or
 /// for keys that are not part of the canonical alphabet.
-pub const fn key_to_canonical(code: u16) -> Option<CanonicalButton> {
+///
+/// `swap_north_west` flips the face-button mapping for `BTN_NORTH` and
+/// `BTN_WEST`. Valve's `linux-*-valve1` kernel's hid-steam driver reports
+/// the Deck's physical Y as `BTN_WEST` and physical X as `BTN_NORTH` —
+/// the opposite of the upstream Linux gamepad convention used by xpad /
+/// hid-playstation / hid-nintendo etc. Without the swap, a PIN enrolled
+/// from one environment (e.g. a stock installer kernel) won't unlock
+/// from another (the installed Valve-kernel initrd), even though the
+/// user pressed the same physical buttons.
+pub const fn key_to_canonical(code: u16, swap_north_west: bool) -> Option<CanonicalButton> {
+    let (north, west) = if swap_north_west {
+        (CanonicalButton::X, CanonicalButton::Y)
+    } else {
+        (CanonicalButton::Y, CanonicalButton::X)
+    };
     match code {
         BTN_SOUTH => Some(CanonicalButton::A),
         BTN_EAST => Some(CanonicalButton::B),
-        BTN_WEST => Some(CanonicalButton::X),
-        BTN_NORTH => Some(CanonicalButton::Y),
+        BTN_WEST => Some(west),
+        BTN_NORTH => Some(north),
         BTN_TL => Some(CanonicalButton::Lb),
         BTN_TR => Some(CanonicalButton::Rb),
         BTN_TL2 => Some(CanonicalButton::Lt),
@@ -99,37 +113,46 @@ mod tests {
 
     #[test]
     fn standard_face_buttons_map() {
-        assert_eq!(key_to_canonical(BTN_SOUTH), Some(CanonicalButton::A));
-        assert_eq!(key_to_canonical(BTN_EAST), Some(CanonicalButton::B));
-        assert_eq!(key_to_canonical(BTN_WEST), Some(CanonicalButton::X));
-        assert_eq!(key_to_canonical(BTN_NORTH), Some(CanonicalButton::Y));
+        assert_eq!(key_to_canonical(BTN_SOUTH, false), Some(CanonicalButton::A));
+        assert_eq!(key_to_canonical(BTN_EAST, false), Some(CanonicalButton::B));
+        assert_eq!(key_to_canonical(BTN_WEST, false), Some(CanonicalButton::X));
+        assert_eq!(key_to_canonical(BTN_NORTH, false), Some(CanonicalButton::Y));
+    }
+
+    #[test]
+    fn steam_deck_swap_flips_north_west() {
+        assert_eq!(key_to_canonical(BTN_NORTH, true), Some(CanonicalButton::X));
+        assert_eq!(key_to_canonical(BTN_WEST, true), Some(CanonicalButton::Y));
+        // The other faces are unaffected.
+        assert_eq!(key_to_canonical(BTN_SOUTH, true), Some(CanonicalButton::A));
+        assert_eq!(key_to_canonical(BTN_EAST, true), Some(CanonicalButton::B));
     }
 
     #[test]
     fn shoulders_and_triggers_map() {
-        assert_eq!(key_to_canonical(BTN_TL), Some(CanonicalButton::Lb));
-        assert_eq!(key_to_canonical(BTN_TR), Some(CanonicalButton::Rb));
-        assert_eq!(key_to_canonical(BTN_TL2), Some(CanonicalButton::Lt));
-        assert_eq!(key_to_canonical(BTN_TR2), Some(CanonicalButton::Rt));
+        assert_eq!(key_to_canonical(BTN_TL, false), Some(CanonicalButton::Lb));
+        assert_eq!(key_to_canonical(BTN_TR, false), Some(CanonicalButton::Rb));
+        assert_eq!(key_to_canonical(BTN_TL2, false), Some(CanonicalButton::Lt));
+        assert_eq!(key_to_canonical(BTN_TR2, false), Some(CanonicalButton::Rt));
     }
 
     #[test]
     fn dpad_buttons_map() {
-        assert_eq!(key_to_canonical(BTN_DPAD_UP), Some(CanonicalButton::DpadN));
-        assert_eq!(key_to_canonical(BTN_DPAD_DOWN), Some(CanonicalButton::DpadS));
-        assert_eq!(key_to_canonical(BTN_DPAD_LEFT), Some(CanonicalButton::DpadW));
-        assert_eq!(key_to_canonical(BTN_DPAD_RIGHT), Some(CanonicalButton::DpadE));
+        assert_eq!(key_to_canonical(BTN_DPAD_UP, false), Some(CanonicalButton::DpadN));
+        assert_eq!(key_to_canonical(BTN_DPAD_DOWN, false), Some(CanonicalButton::DpadS));
+        assert_eq!(key_to_canonical(BTN_DPAD_LEFT, false), Some(CanonicalButton::DpadW));
+        assert_eq!(key_to_canonical(BTN_DPAD_RIGHT, false), Some(CanonicalButton::DpadE));
     }
 
     #[test]
     fn submit_is_not_canonical() {
-        assert_eq!(key_to_canonical(BTN_START), None);
+        assert_eq!(key_to_canonical(BTN_START, false), None);
     }
 
     #[test]
     fn unknown_keys_unmapped() {
         for code in [0u16, 1, 0x100, 0x140, 0xfff] {
-            assert_eq!(key_to_canonical(code), None);
+            assert_eq!(key_to_canonical(code, false), None);
         }
     }
 
