@@ -40,16 +40,21 @@ in
       default = null;
       example = "/dev/disk/by-partlabel/ESP";
       description = ''
-        If set, mount this device (assumed FAT) at /boot-debug in the
-        initrd before the agent starts and redirect the agent's
-        stdout+stderr there. The ESP is unencrypted, so after a failed
-        boot you can read /boot/luks-controller-unlock.log from any
-        rescue environment without unlocking LUKS first.
+        Wrap the agent in a shell script that mounts this device (assumed
+        FAT) at /boot-debug and tees agent output to
+        /boot-debug/luks-controller-unlock.log. Also installs an
+        emergency-time hook that dumps /run/log/journal to the ESP so
+        the full initrd journal survives a failed boot.
 
-        Strictly a debug aid — leave null in production. The log will
-        contain the canonical PIN char sequence at trace level if
-        verbose flags are passed; do not enable this on a system with
-        an enrolled keyslot you care about secrecy for.
+        Read after failure from any rescue env:
+            mount /dev/<ESP> /mnt
+            cat /mnt/luks-controller-unlock.log
+            journalctl --file=/mnt/initrd-journal/*/system.journal
+
+        Strictly debug only. The log includes verbose tracing output
+        from the agent and the journal may include the canonical PIN
+        char sequence — do not leave on for a system with an enrolled
+        keyslot you care about secrecy for.
       '';
     };
   };
@@ -83,31 +88,13 @@ in
         [ "${cfg.package}/bin/luks-controller-unlock" ]
         ++ lib.optionals (cfg.debugLogToEsp != null) [
           "${pkgs.util-linux}/bin/mount"
+          "${pkgs.util-linux}/bin/umount"
           "${pkgs.coreutils}/bin/mkdir"
+          "${pkgs.coreutils}/bin/cp"
+          "${pkgs.coreutils}/bin/sync"
+          "${pkgs.coreutils}/bin/uname"
+          "${pkgs.bash}/bin/bash"
         ];
-
-      # Separate oneshot unit to mount the ESP. The agent unit
-      # Requires+After it so systemd evaluates the StandardOutput=
-      # append: path AFTER the mount succeeded — which it does not do
-      # if the mount is an ExecStartPre on the agent unit itself
-      # (StandardOutput is set up first).
-      services.luks-controller-mount-debug-esp = lib.mkIf (cfg.debugLogToEsp != null) {
-        description = "Mount ESP at /boot-debug for luks-controller-unlock log";
-        wantedBy = [ "luks-controller-unlock.service" ];
-        before = [ "luks-controller-unlock.service" ];
-        unitConfig.DefaultDependencies = false;
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          ExecStart = [
-            "${pkgs.coreutils}/bin/mkdir -p /boot-debug"
-            "${pkgs.util-linux}/bin/mount -t vfat -o rw,umask=0077 ${cfg.debugLogToEsp} /boot-debug"
-          ];
-          # mount fails with EBUSY on retry; ignore so a service
-          # restart doesn't bounce off an already-mounted FS.
-          SuccessExitStatus = [ "0" "32" ];
-        };
-      };
 
       services.luks-controller-unlock = {
         description = "Controller-driven LUKS unlock agent";
@@ -115,19 +102,66 @@ in
         before = [ "cryptsetup.target" ];
         conflicts = [ "plymouth-start.service" ];
         unitConfig.DefaultDependencies = false;
+        serviceConfig =
+          if cfg.debugLogToEsp == null then {
+            Type = "simple";
+            ExecStart = "${cfg.package}/bin/luks-controller-unlock agent";
+            Restart = "on-failure";
+            RestartSec = 2;
+            TimeoutStartSec = 0;
+          } else {
+            Type = "simple";
+            # Shell wrapper: mount ESP, tee agent output to file. Mount
+            # failure falls back to stderr-only so the agent still runs.
+            ExecStart = "${pkgs.writeShellScript "luks-controller-unlock-debug-wrap" ''
+              set -u
+              MOUNTPOINT=/boot-debug
+              LOG=$MOUNTPOINT/luks-controller-unlock.log
+              ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
+              if ! ${pkgs.util-linux}/bin/mount -t vfat -o rw,umask=0077 ${cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null; then
+                exec ${cfg.package}/bin/luks-controller-unlock -vv agent
+              fi
+              {
+                echo "=== boot uptime=$(cat /proc/uptime 2>/dev/null) ==="
+                ${pkgs.coreutils}/bin/uname -a
+                echo "--- agent stderr+stdout ---"
+              } >> "$LOG" 2>&1
+              ${pkgs.coreutils}/bin/sync
+              ${cfg.package}/bin/luks-controller-unlock -vv agent >> "$LOG" 2>&1
+              rc=$?
+              echo "--- agent exited rc=$rc ---" >> "$LOG"
+              ${pkgs.coreutils}/bin/sync
+              exit $rc
+            ''}";
+            Restart = "on-failure";
+            RestartSec = 2;
+            TimeoutStartSec = 0;
+          };
+      };
+
+      # On emergency entry (e.g. cryptsetup target failed) copy the
+      # in-memory journald output to the ESP so the full initrd
+      # journal survives the reboot.
+      services.luks-controller-emergency-dump-journal = lib.mkIf (cfg.debugLogToEsp != null) {
+        description = "Dump initrd journal to ESP on emergency entry";
+        wantedBy = [ "emergency.target" "emergency.service" ];
+        before = [ "emergency.service" ];
+        unitConfig.DefaultDependencies = false;
         serviceConfig = {
-          Type = "simple";
-          ExecStart = "${cfg.package}/bin/luks-controller-unlock -vv agent";
-          Restart = "on-failure";
-          RestartSec = 2;
-          TimeoutStartSec = 0;
-        } // lib.optionalAttrs (cfg.debugLogToEsp != null) {
-          StandardOutput = "append:/boot-debug/luks-controller-unlock.log";
-          StandardError = "append:/boot-debug/luks-controller-unlock.log";
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = "${pkgs.writeShellScript "dump-initrd-journal" ''
+            set -u
+            MOUNTPOINT=/boot-debug
+            ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
+            ${pkgs.util-linux}/bin/mount -t vfat -o rw ${cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null || true
+            ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT/initrd-journal"
+            if [ -d /run/log/journal ]; then
+              ${pkgs.coreutils}/bin/cp -r /run/log/journal/. "$MOUNTPOINT/initrd-journal/" 2>/dev/null || true
+            fi
+            ${pkgs.coreutils}/bin/sync
+          ''}";
         };
-      } // lib.optionalAttrs (cfg.debugLogToEsp != null) {
-        requires = [ "luks-controller-mount-debug-esp.service" ];
-        after = [ "luks-controller-mount-debug-esp.service" ];
       };
 
       services.systemd-ask-password-console = lib.mkIf cfg.maskConsoleAgent {
