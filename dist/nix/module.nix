@@ -34,6 +34,24 @@ in
       ];
       description = "Kernel modules added to the initrd for DRM and controller HID.";
     };
+
+    debugLogToEsp = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/dev/disk/by-partlabel/ESP";
+      description = ''
+        If set, mount this device (assumed FAT) at /boot-debug in the
+        initrd before the agent starts and redirect the agent's
+        stdout+stderr there. The ESP is unencrypted, so after a failed
+        boot you can read /boot/luks-controller-unlock.log from any
+        rescue environment without unlocking LUKS first.
+
+        Strictly a debug aid — leave null in production. The log will
+        contain the canonical PIN char sequence at trace level if
+        verbose flags are passed; do not enable this on a system with
+        an enrolled keyslot you care about secrecy for.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -53,6 +71,19 @@ in
 
     boot.initrd.systemd = {
       storePaths = [ "${cfg.package}/bin/luks-controller-unlock" ];
+
+      mounts = lib.mkIf (cfg.debugLogToEsp != null) [
+        {
+          what = cfg.debugLogToEsp;
+          where = "/boot-debug";
+          type = "vfat";
+          options = "rw,relatime,umask=0077";
+          unitConfig.DefaultDependencies = false;
+          wantedBy = [ "luks-controller-unlock.service" ];
+          before = [ "luks-controller-unlock.service" ];
+        }
+      ];
+
       services.luks-controller-unlock = {
         description = "Controller-driven LUKS unlock agent";
         wantedBy = [ "cryptsetup.target" ];
@@ -61,10 +92,15 @@ in
         unitConfig.DefaultDependencies = false;
         serviceConfig = {
           Type = "simple";
-          ExecStart = "${cfg.package}/bin/luks-controller-unlock agent";
+          ExecStart = "${cfg.package}/bin/luks-controller-unlock -vv agent";
           Restart = "on-failure";
           RestartSec = 2;
           TimeoutStartSec = 0;
+        } // lib.optionalAttrs (cfg.debugLogToEsp != null) {
+          # Append (not truncate) so the journal across boots and
+          # restarts accumulates instead of clobbering itself.
+          StandardOutput = "append:/boot-debug/luks-controller-unlock.log";
+          StandardError = "append:/boot-debug/luks-controller-unlock.log";
         };
       };
 
