@@ -215,12 +215,16 @@ fn add_keyslot(device: &std::path::Path, existing: &[u8], new: &[u8], memory_kib
             Error::Subprocess("cryptsetup stdin pipe was not captured".into())
         })?;
         let mut stdin = stdin;
-        // existing must be exactly --keyfile-size bytes — no separator.
+        // existing: exactly --keyfile-size bytes, no separator.
         stdin.write_all(existing)?;
-        // new key is read as a separate keyfile from stdin's remaining
-        // bytes; trailing \n is stripped by cryptsetup.
+        // new key: cryptsetup reads stdin as a BINARY keyfile and
+        // does NOT strip trailing newlines (that's the passphrase-
+        // prompt behavior, not the keyfile-read behavior). Writing
+        // a trailing \n here would bake it into the keyslot, and the
+        // unlock agent (which sends the bare passphrase over the
+        // ask-password socket) would never match. Write only the
+        // passphrase bytes — EOF on close terminates the read.
         stdin.write_all(new)?;
-        stdin.write_all(b"\n")?;
         // closing here releases the pipe so cryptsetup reads EOF.
     }
 

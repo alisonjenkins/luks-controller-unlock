@@ -188,7 +188,12 @@ impl Controller {
                 .map_err(|e| Error::Evdev(format!("fetch_events: {e}")))?
                 .collect();
             for ev in &events {
-                debug!(
+                // trace level (not debug): the Steam Deck IMU on the
+                // built-in controller fires ABS_X/Y/RX/RY at ~250 Hz
+                // so this would flood the journal under -vv. Show
+                // with RUST_LOG=trace or -vvv when actually debugging
+                // a controller mapping.
+                tracing::trace!(
                     type_ = ?ev.event_type(),
                     code = ev.code(),
                     value = ev.value(),
