@@ -2,6 +2,44 @@
 
 let
   cfg = config.boot.initrd.luks-controller-unlock;
+
+  # Bind these once so we can list them in storePaths AND reference
+  # them as ExecStart= values. boot.initrd.systemd doesn't follow
+  # closure of ExecStart= automatically, so a writeShellScript inline
+  # in serviceConfig.ExecStart would land as a dangling reference and
+  # systemd would 203/EXEC before the script ever ran.
+  agentWrapper = pkgs.writeShellScript "luks-controller-unlock-debug-wrap" ''
+    set -u
+    MOUNTPOINT=/boot-debug
+    LOG=$MOUNTPOINT/luks-controller-unlock.log
+    ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
+    if ! ${pkgs.util-linux}/bin/mount -t vfat -o rw,umask=0077 ${toString cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null; then
+      exec ${cfg.package}/bin/luks-controller-unlock -vv agent
+    fi
+    {
+      echo "=== boot uptime=$(cat /proc/uptime 2>/dev/null) ==="
+      ${pkgs.coreutils}/bin/uname -a
+      echo "--- agent stderr+stdout ---"
+    } >> "$LOG" 2>&1
+    ${pkgs.coreutils}/bin/sync
+    ${cfg.package}/bin/luks-controller-unlock -vv agent >> "$LOG" 2>&1
+    rc=$?
+    echo "--- agent exited rc=$rc ---" >> "$LOG"
+    ${pkgs.coreutils}/bin/sync
+    exit $rc
+  '';
+
+  journalDump = pkgs.writeShellScript "dump-initrd-journal" ''
+    set -u
+    MOUNTPOINT=/boot-debug
+    ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
+    ${pkgs.util-linux}/bin/mount -t vfat -o rw ${toString cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null || true
+    ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT/initrd-journal"
+    if [ -d /run/log/journal ]; then
+      ${pkgs.coreutils}/bin/cp -r /run/log/journal/. "$MOUNTPOINT/initrd-journal/" 2>/dev/null || true
+    fi
+    ${pkgs.coreutils}/bin/sync
+  '';
 in
 {
   options.boot.initrd.luks-controller-unlock = {
@@ -87,13 +125,21 @@ in
       storePaths =
         [ "${cfg.package}/bin/luks-controller-unlock" ]
         ++ lib.optionals (cfg.debugLogToEsp != null) [
+          # The wrappers themselves — without these, ExecStart= points
+          # at store paths that aren't in the initrd and systemd exits
+          # 203/EXEC before any redirected output exists.
+          agentWrapper
+          journalDump
+          # And the tools the wrappers exec. writeShellScript hardcodes
+          # the full /nix/store paths to coreutils + util-linux, so we
+          # need those packages' bin trees too. Bash for the shebang.
+          "${pkgs.bash}/bin/bash"
           "${pkgs.util-linux}/bin/mount"
           "${pkgs.util-linux}/bin/umount"
           "${pkgs.coreutils}/bin/mkdir"
           "${pkgs.coreutils}/bin/cp"
           "${pkgs.coreutils}/bin/sync"
           "${pkgs.coreutils}/bin/uname"
-          "${pkgs.bash}/bin/bash"
         ];
 
       services.luks-controller-unlock = {
@@ -111,28 +157,7 @@ in
             TimeoutStartSec = 0;
           } else {
             Type = "simple";
-            # Shell wrapper: mount ESP, tee agent output to file. Mount
-            # failure falls back to stderr-only so the agent still runs.
-            ExecStart = "${pkgs.writeShellScript "luks-controller-unlock-debug-wrap" ''
-              set -u
-              MOUNTPOINT=/boot-debug
-              LOG=$MOUNTPOINT/luks-controller-unlock.log
-              ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
-              if ! ${pkgs.util-linux}/bin/mount -t vfat -o rw,umask=0077 ${cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null; then
-                exec ${cfg.package}/bin/luks-controller-unlock -vv agent
-              fi
-              {
-                echo "=== boot uptime=$(cat /proc/uptime 2>/dev/null) ==="
-                ${pkgs.coreutils}/bin/uname -a
-                echo "--- agent stderr+stdout ---"
-              } >> "$LOG" 2>&1
-              ${pkgs.coreutils}/bin/sync
-              ${cfg.package}/bin/luks-controller-unlock -vv agent >> "$LOG" 2>&1
-              rc=$?
-              echo "--- agent exited rc=$rc ---" >> "$LOG"
-              ${pkgs.coreutils}/bin/sync
-              exit $rc
-            ''}";
+            ExecStart = "${agentWrapper}";
             Restart = "on-failure";
             RestartSec = 2;
             TimeoutStartSec = 0;
@@ -150,17 +175,7 @@ in
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;
-          ExecStart = "${pkgs.writeShellScript "dump-initrd-journal" ''
-            set -u
-            MOUNTPOINT=/boot-debug
-            ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
-            ${pkgs.util-linux}/bin/mount -t vfat -o rw ${cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null || true
-            ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT/initrd-journal"
-            if [ -d /run/log/journal ]; then
-              ${pkgs.coreutils}/bin/cp -r /run/log/journal/. "$MOUNTPOINT/initrd-journal/" 2>/dev/null || true
-            fi
-            ${pkgs.coreutils}/bin/sync
-          ''}";
+          ExecStart = "${journalDump}";
         };
       };
 
