@@ -69,6 +69,15 @@ pub fn run(args: Args) -> Result<()> {
     add_keyslot(&device, &existing, &new, args.pbkdf_memory_kib)?;
     info!("enroll: keyslot added");
     eprintln!("Enrollment succeeded.");
+    // Diagnostic: print the encoded passphrase so it can be compared
+    // against the agent's "agent: pin chars" debug log on next boot.
+    // Useful when an unlock attempt is rejected and you suspect a
+    // button-mapping divergence between enroll and unlock environments.
+    eprintln!(
+        "encoded ({} bytes): {}",
+        new.len(),
+        String::from_utf8_lossy(&new),
+    );
     Ok(())
 }
 

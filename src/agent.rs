@@ -191,6 +191,14 @@ fn process_request(path: &Path, card: &Path, lockout: &mut Duration) -> Result<(
                 let pass = pin.to_passphrase();
                 send_reply(&req.socket, true, &pass)?;
                 info!("agent: replied {} bytes", pass.len());
+                // TEMPORARY debug aid for diagnosing enroll-vs-unlock
+                // keyslot mismatches: log the encoded canonical PIN
+                // string. Only fires at debug level. Remove once a
+                // boot has successfully unlocked.
+                debug!(
+                    pin = %String::from_utf8_lossy(&pass),
+                    "agent: pin chars (debug only — remove after unlock works)",
+                );
                 // systemd will remove the ask file on success and create a
                 // new one on failure. Apply our local back-off either way:
                 std::thread::sleep(*lockout);
