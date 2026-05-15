@@ -14,7 +14,7 @@ let
     LOG=$MOUNTPOINT/luks-controller-unlock.log
     ${pkgs.coreutils}/bin/mkdir -p "$MOUNTPOINT"
     if ! ${pkgs.util-linux}/bin/mount -t vfat -o rw,umask=0077 ${toString cfg.debugLogToEsp} "$MOUNTPOINT" 2>/dev/null; then
-      exec ${cfg.package}/bin/luks-controller-unlock -vv agent
+      exec ${cfg.package}/bin/luks-controller-unlock -v agent
     fi
     {
       echo "=== boot uptime=$(cat /proc/uptime 2>/dev/null) ==="
@@ -22,7 +22,7 @@ let
       echo "--- agent stderr+stdout ---"
     } >> "$LOG" 2>&1
     ${pkgs.coreutils}/bin/sync
-    ${cfg.package}/bin/luks-controller-unlock -vv agent >> "$LOG" 2>&1
+    ${cfg.package}/bin/luks-controller-unlock -v agent >> "$LOG" 2>&1
     rc=$?
     echo "--- agent exited rc=$rc ---" >> "$LOG"
     ${pkgs.coreutils}/bin/sync
