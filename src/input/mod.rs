@@ -174,6 +174,12 @@ impl Controller {
                 .map_err(|e| Error::Evdev(format!("fetch_events: {e}")))?
                 .collect();
             for ev in &events {
+                debug!(
+                    type_ = ?ev.event_type(),
+                    code = ev.code(),
+                    value = ev.value(),
+                    "input: raw event",
+                );
                 if let Some(ie) = self.handle_event(ev) {
                     return Ok(Some(ie));
                 }
@@ -338,9 +344,25 @@ fn probe_capabilities(dev: &evdev::Device) -> Capabilities {
     let supports_abs = |code: u16| {
         abs_axes.is_some_and(|set| set.contains(evdev::AbsoluteAxisCode(code)))
     };
+    let keys = dev.supported_keys();
+    let supports_key = |code: u16| {
+        keys.is_some_and(|set| set.contains(evdev::KeyCode::new(code)))
+    };
     let lt_uses_axis = supports_abs(ABS_Z);
     let rt_uses_axis = supports_abs(ABS_RZ);
-    let dpad_uses_hat = supports_abs(ABS_HAT0X) || supports_abs(ABS_HAT0Y);
+    // Prefer digital BTN_DPAD_* over the ABS_HAT0X/Y axes when the
+    // device advertises both. hid-steam (Steam Deck built-in
+    // controller, Steam Controller) and hid-playstation (DualSense)
+    // advertise hat axis support but only ever emit BTN_DPAD_*.
+    // Picking the hat in that case suppresses the buttons and the
+    // d-pad goes silent. Older Switch Pro / generic HID gamepads
+    // without BTN_DPAD_* still get the hat fallback.
+    let dpad_buttons_present = supports_key(BTN_DPAD_UP)
+        || supports_key(BTN_DPAD_DOWN)
+        || supports_key(BTN_DPAD_LEFT)
+        || supports_key(BTN_DPAD_RIGHT);
+    let dpad_uses_hat = !dpad_buttons_present
+        && (supports_abs(ABS_HAT0X) || supports_abs(ABS_HAT0Y));
 
     let abs_info: Vec<(evdev::AbsoluteAxisCode, evdev::AbsInfo)> = dev
         .get_absinfo()
