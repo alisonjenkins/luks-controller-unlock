@@ -18,8 +18,10 @@ use tracing::{debug, info, warn};
 use crate::error::{Error, Result};
 use crate::pin::CanonicalButton;
 
+pub mod lizard;
 pub mod tables;
 
+use lizard::LizardGuard;
 use tables::{
     ABS_HAT0X, ABS_HAT0Y, ABS_RZ, ABS_Z, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
     BTN_DPAD_UP, BTN_EAST, BTN_SOUTH, BTN_START, BTN_TL2, BTN_TR2,
@@ -55,7 +57,6 @@ enum BState {
     ConsumedAsBackspace,
 }
 
-#[derive(Debug)]
 pub struct Controller {
     pub name: String,
     pub path: String,
@@ -63,6 +64,19 @@ pub struct Controller {
     device: evdev::Device,
     axis: AxisState,
     b: BState,
+    // Held to keep hid-steam out of lizard mode for the lifetime of
+    // the controller. Dropped restores prior value.
+    _lizard: LizardGuard,
+}
+
+impl std::fmt::Debug for Controller {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Controller")
+            .field("name", &self.name)
+            .field("path", &self.path)
+            .field("caps", &self.caps)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Resolved per-device input dispatch choices.
@@ -93,6 +107,11 @@ pub struct Capabilities {
 impl Controller {
     /// Open the first connected device that looks like a gamepad.
     pub fn open_first() -> Result<Self> {
+        // Disable hid-steam lizard mode FIRST so the Steam Controller /
+        // Deck built-in controller starts emitting gamepad events before
+        // we enumerate. The guard is moved into the returned Controller
+        // and restores the prior value on drop.
+        let lizard = LizardGuard::disable();
         for (path, dev) in evdev::enumerate() {
             if !is_gamepad(&dev) {
                 debug!(path = %path.display(), "input: skipping non-gamepad device");
@@ -117,6 +136,7 @@ impl Controller {
                 device: dev,
                 axis: AxisState::default(),
                 b: BState::Idle,
+                _lizard: lizard,
             });
         }
         warn!("input: no gamepad device found");
