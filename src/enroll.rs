@@ -150,6 +150,10 @@ fn collect_pin(ctrl: &mut Controller, prompt: &str) -> Result<Pin> {
                 eprintln!();
                 return Ok(pin);
             }
+            Some(InputEvent::Quit) => {
+                eprintln!();
+                return Err(Error::Cancelled);
+            }
             None => {}
         }
     }

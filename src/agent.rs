@@ -27,7 +27,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
 use inotify::{Inotify, WatchMask};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::{Error, Result};
 use crate::input::{Controller, InputEvent};
@@ -158,6 +158,14 @@ fn process_request(path: &Path, card: &Path, lockout: &mut Duration) -> Result<(
             Some(InputEvent::Backspace) if pin.pop().is_some() => {
                 state.pin_len = pin.len();
                 dirty = true;
+            }
+            Some(InputEvent::Quit) => {
+                // Initrd has nowhere to "quit" to — there is no
+                // shell, no recovery, just systemd waiting on the
+                // unlock. Swallow the chord rather than aborting and
+                // leaving the volume locked. The chord is documented
+                // for the enroll/test paths only.
+                debug!("agent: ignoring SELECT+START quit chord at unlock prompt");
             }
             Some(InputEvent::Submit) => {
                 if pin.is_empty() {

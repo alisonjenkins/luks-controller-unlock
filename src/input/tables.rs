@@ -21,7 +21,6 @@ pub const BTN_TL: u16 = 0x136; // LB
 pub const BTN_TR: u16 = 0x137; // RB
 pub const BTN_TL2: u16 = 0x138; // LT (some controllers report as button)
 pub const BTN_TR2: u16 = 0x139; // RT (some controllers report as button)
-#[allow(dead_code)]
 pub const BTN_SELECT: u16 = 0x13a;
 pub const BTN_START: u16 = 0x13b; // SUBMIT
 #[allow(dead_code)]

@@ -24,7 +24,7 @@ pub mod tables;
 use lizard::LizardGuard;
 use tables::{
     ABS_HAT0X, ABS_HAT0Y, ABS_RZ, ABS_Z, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
-    BTN_DPAD_UP, BTN_EAST, BTN_SOUTH, BTN_START, BTN_TL2, BTN_TR2,
+    BTN_DPAD_UP, BTN_EAST, BTN_SELECT, BTN_SOUTH, BTN_START, BTN_TL2, BTN_TR2,
     TRIGGER_PRESS_THRESHOLD, TRIGGER_RELEASE_THRESHOLD, key_to_canonical,
     scale_trigger_thresholds,
 };
@@ -40,6 +40,11 @@ pub enum InputEvent {
     Submit,
     /// B was held past the backspace threshold.
     Backspace,
+    /// SELECT + START held simultaneously: caller should exit cleanly
+    /// so RAII guards (e.g. lizard mode restore) fire. This is the
+    /// only safe exit on a Deck where the only inputs are the
+    /// controller and the touchscreen.
+    Quit,
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +53,13 @@ struct AxisState {
     rt_held: bool,
     hat_x: i32, // -1 / 0 / +1
     hat_y: i32,
+}
+
+#[derive(Debug, Default)]
+struct ChordState {
+    select_held: bool,
+    start_held: bool,
+    quit_emitted: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -64,6 +76,7 @@ pub struct Controller {
     device: evdev::Device,
     axis: AxisState,
     b: BState,
+    chord: ChordState,
     // Held to keep hid-steam out of lizard mode for the lifetime of
     // the controller. Dropped restores prior value.
     _lizard: LizardGuard,
@@ -136,6 +149,7 @@ impl Controller {
                 device: dev,
                 axis: AxisState::default(),
                 b: BState::Idle,
+                chord: ChordState::default(),
                 _lizard: lizard,
             });
         }
@@ -202,8 +216,35 @@ impl Controller {
             return None;
         }
 
+        // SELECT + START chord = clean exit. Track both buttons'
+        // state and emit Quit once both are held; suppress the
+        // normal START=Submit semantics for the actuation that
+        // completed the chord so callers don't get a stale Submit
+        // followed by Quit.
+        if code == BTN_SELECT {
+            self.chord.select_held = value == 1;
+            if value == 0 {
+                self.chord.quit_emitted = false;
+            }
+            if let Some(q) = self.maybe_quit() {
+                return Some(q);
+            }
+            return None;
+        }
         if code == BTN_START {
-            return (value == 1).then_some(InputEvent::Submit);
+            self.chord.start_held = value == 1;
+            if value == 0 {
+                self.chord.quit_emitted = false;
+            }
+            if let Some(q) = self.maybe_quit() {
+                return Some(q);
+            }
+            // Only surface Submit on press, and only when SELECT
+            // isn't part of an in-progress chord.
+            if value == 1 && !self.chord.select_held {
+                return Some(InputEvent::Submit);
+            }
+            return None;
         }
 
         if code == BTN_EAST {
@@ -231,6 +272,14 @@ impl Controller {
 
         if value == 1 {
             return key_to_canonical(code).map(InputEvent::Press);
+        }
+        None
+    }
+
+    fn maybe_quit(&mut self) -> Option<InputEvent> {
+        if self.chord.select_held && self.chord.start_held && !self.chord.quit_emitted {
+            self.chord.quit_emitted = true;
+            return Some(InputEvent::Quit);
         }
         None
     }
@@ -395,7 +444,7 @@ fn probe_capabilities(dev: &evdev::Device) -> Capabilities {
 pub fn run_test() -> Result<()> {
     let mut ctrl = Controller::open_first()?;
     info!(
-        "test-input: listening on '{}' ({}). Press Ctrl-C to exit.",
+        "test-input: listening on '{}' ({}). SELECT+START to exit (Ctrl-C also works).",
         ctrl.name, ctrl.path
     );
     loop {
@@ -403,6 +452,10 @@ pub fn run_test() -> Result<()> {
             Some(InputEvent::Press(b)) => info!("press: {} ('{}')", b.label(), b.as_char() as char),
             Some(InputEvent::Submit) => info!("submit (START)"),
             Some(InputEvent::Backspace) => info!("backspace (B held)"),
+            Some(InputEvent::Quit) => {
+                info!("quit (SELECT+START)");
+                return Ok(());
+            }
             None => {}
         }
     }

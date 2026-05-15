@@ -96,6 +96,10 @@ pub fn run_test(args: &TestArgs) -> Result<()> {
                 }
                 false
             }
+            Some(InputEvent::Quit) => {
+                info!("test-ui: quit (SELECT+START)");
+                break;
+            }
             _ => false,
         };
         if dirty {

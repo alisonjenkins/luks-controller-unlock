@@ -47,6 +47,9 @@ pub enum Error {
 
     #[error("invalid configuration: {0}")]
     Config(String),
+
+    #[error("cancelled by user (SELECT+START)")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
