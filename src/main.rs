@@ -5,6 +5,7 @@ use tracing::error;
 mod agent;
 mod enroll;
 mod error;
+mod gen;
 mod input;
 mod keyscript;
 mod pin;
@@ -28,6 +29,8 @@ struct Cli {
 enum Command {
     /// Enroll a new controller-PIN keyslot on a LUKS2 device.
     Enroll(enroll::Args),
+    /// Print pwgen-style candidate PINs you can pick from.
+    Gen(gen::GenArgs),
     /// Run as a systemd ask-password agent inside initrd (default for systemd initrds).
     Agent(agent::Args),
     /// Run as a crypttab keyscript (Debian/Ubuntu initramfs-tools).
@@ -62,6 +65,7 @@ fn run(cli: Cli) -> Result<()> {
     install_tracing(cli.verbose);
     match cli.command {
         Command::Enroll(args) => enroll::run(args),
+        Command::Gen(args) => gen::run(&args),
         Command::Agent(args) => agent::run(&args),
         Command::Keyscript(args) => keyscript::run(args),
         Command::Selftest => selftest::run(),
