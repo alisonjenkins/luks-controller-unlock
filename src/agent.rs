@@ -96,10 +96,21 @@ pub fn run(args: &Args) -> Result<()> {
             }
         }
         for path in new_files {
+            // Only mark handled on success. A transient failure (e.g.
+            // DRM card not yet enumerated when amdgpu is still loading,
+            // controller hot-plug race) must NOT mark the request as
+            // handled — systemd-cryptsetup waits indefinitely on the
+            // same ask file and never generates a new one, so a
+            // permanent "handled but never replied" entry would brick
+            // the boot.
             if let Err(e) = process_request(&path, &args.card, &mut lockout) {
-                warn!(?path, "agent: failed to process request: {e}");
+                warn!(?path, "agent: failed to process request: {e}; will retry");
+                // Brief backoff so we don't busy-loop if the error is
+                // immediate (e.g. ENOENT on /dev/dri/card0).
+                std::thread::sleep(Duration::from_millis(500));
+            } else {
+                handled.insert(path);
             }
-            handled.insert(path);
         }
         // Re-scan: inotify can miss a file created between watch setup and
         // a previously-handled batch; cheap to re-poll.
@@ -120,7 +131,11 @@ fn process_pending(
             continue;
         }
         if let Err(e) = process_request(&path, card, lockout) {
-            warn!(?path, "agent: failed to process request: {e}");
+            warn!(?path, "agent: failed to process request: {e}; will retry");
+            // Do NOT mark handled so the next poll re-tries this ask
+            // file — see the main loop for the rationale.
+            std::thread::sleep(Duration::from_millis(500));
+            continue;
         }
         handled.insert(path);
     }
