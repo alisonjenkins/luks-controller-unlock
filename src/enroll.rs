@@ -184,12 +184,22 @@ fn add_keyslot(device: &std::path::Path, existing: &[u8], new: &[u8], memory_kib
         .to_str()
         .ok_or_else(|| Error::Config(format!("device path is not UTF-8: {}", device.display())))?;
     let memory_arg = memory_kib.to_string();
+    // cryptsetup's --key-file=- reads stdin as a binary keyfile up to
+    // its max size (8 MiB), it does NOT stop at newline. Pipe the
+    // existing passphrase, then the new key, on the same stdin and
+    // tell cryptsetup exactly how many bytes the first one is via
+    // --keyfile-size. Without this the "existing" passphrase becomes
+    // existing + "\n" + new, which never matches a real keyslot and
+    // surfaces as "No key available with this passphrase".
+    let existing_size = existing.len().to_string();
     let mut child = Command::new("cryptsetup")
         .args([
             "luksAddKey",
             "--batch-mode",
             "--pbkdf-memory",
             &memory_arg,
+            "--keyfile-size",
+            &existing_size,
             "--key-file=-",
             device_str,
             "-",
@@ -205,8 +215,10 @@ fn add_keyslot(device: &std::path::Path, existing: &[u8], new: &[u8], memory_kib
             Error::Subprocess("cryptsetup stdin pipe was not captured".into())
         })?;
         let mut stdin = stdin;
+        // existing must be exactly --keyfile-size bytes — no separator.
         stdin.write_all(existing)?;
-        stdin.write_all(b"\n")?;
+        // new key is read as a separate keyfile from stdin's remaining
+        // bytes; trailing \n is stripped by cryptsetup.
         stdin.write_all(new)?;
         stdin.write_all(b"\n")?;
         // closing here releases the pipe so cryptsetup reads EOF.
