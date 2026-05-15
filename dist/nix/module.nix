@@ -1,4 +1,4 @@
-{ config, lib, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.boot.initrd.luks-controller-unlock;
@@ -79,19 +79,35 @@ in
       ];
 
     boot.initrd.systemd = {
-      storePaths = [ "${cfg.package}/bin/luks-controller-unlock" ];
+      storePaths =
+        [ "${cfg.package}/bin/luks-controller-unlock" ]
+        ++ lib.optionals (cfg.debugLogToEsp != null) [
+          "${pkgs.util-linux}/bin/mount"
+          "${pkgs.coreutils}/bin/mkdir"
+        ];
 
-      mounts = lib.mkIf (cfg.debugLogToEsp != null) [
-        {
-          what = cfg.debugLogToEsp;
-          where = "/boot-debug";
-          type = "vfat";
-          options = "rw,relatime,umask=0077";
-          unitConfig.DefaultDependencies = false;
-          wantedBy = [ "luks-controller-unlock.service" ];
-          before = [ "luks-controller-unlock.service" ];
-        }
-      ];
+      # Separate oneshot unit to mount the ESP. The agent unit
+      # Requires+After it so systemd evaluates the StandardOutput=
+      # append: path AFTER the mount succeeded — which it does not do
+      # if the mount is an ExecStartPre on the agent unit itself
+      # (StandardOutput is set up first).
+      services.luks-controller-mount-debug-esp = lib.mkIf (cfg.debugLogToEsp != null) {
+        description = "Mount ESP at /boot-debug for luks-controller-unlock log";
+        wantedBy = [ "luks-controller-unlock.service" ];
+        before = [ "luks-controller-unlock.service" ];
+        unitConfig.DefaultDependencies = false;
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = [
+            "${pkgs.coreutils}/bin/mkdir -p /boot-debug"
+            "${pkgs.util-linux}/bin/mount -t vfat -o rw,umask=0077 ${cfg.debugLogToEsp} /boot-debug"
+          ];
+          # mount fails with EBUSY on retry; ignore so a service
+          # restart doesn't bounce off an already-mounted FS.
+          SuccessExitStatus = [ "0" "32" ];
+        };
+      };
 
       services.luks-controller-unlock = {
         description = "Controller-driven LUKS unlock agent";
@@ -106,11 +122,12 @@ in
           RestartSec = 2;
           TimeoutStartSec = 0;
         } // lib.optionalAttrs (cfg.debugLogToEsp != null) {
-          # Append (not truncate) so the journal across boots and
-          # restarts accumulates instead of clobbering itself.
           StandardOutput = "append:/boot-debug/luks-controller-unlock.log";
           StandardError = "append:/boot-debug/luks-controller-unlock.log";
         };
+      } // lib.optionalAttrs (cfg.debugLogToEsp != null) {
+        requires = [ "luks-controller-mount-debug-esp.service" ];
+        after = [ "luks-controller-mount-debug-esp.service" ];
       };
 
       services.systemd-ask-password-console = lib.mkIf cfg.maskConsoleAgent {
