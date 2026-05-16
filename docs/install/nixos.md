@@ -1,13 +1,11 @@
 # Setup — NixOS
 
-> ⚠️ **Untested on NixOS.** This tool is new. The procedure below is
-> the *intended* path on NixOS with systemd stage 1; it has not yet
-> been end-to-end booted by the author. Treat it as a recipe to
-> verify, not a known-good playbook. Climb
-> [`TESTING.md`](../../TESTING.md) before rebuilding a real host and
-> keep your keyboard keyslot intact as the recovery path. Generations
-> are your friend — do not garbage-collect the previous one until the
-> new one has booted cleanly several times.
+> **Status:** boots cleanly on a Steam Deck OLED with NixOS +
+> Jovian-NixOS + impermanence root + `linux-*-valve1` kernel. Other
+> NixOS configurations (regular laptop, desktop) follow the same
+> module wiring but haven't been bench-tested. Generations are your
+> friend — do not garbage-collect the previous one until the new one
+> has booted cleanly several times.
 
 systemd stage 1 initrd. Agent path uses the systemd ask-password
 protocol.
@@ -16,6 +14,55 @@ protocol.
 > stage 1 does not implement the ask-password protocol the agent uses.
 > The NixOS module asserts this — `nixos-rebuild` will refuse to
 > evaluate without it.
+
+## Gotchas surfaced during Steam Deck deployment
+
+These bit us hard during the first end-to-end deployment. If you hit
+the same symptoms on another NixOS host, jump straight to the fix:
+
+1. **TPM2 + systemd 258.7 segfault.** If `boot.initrd.luks.devices.<name>.crypttabExtraOpts`
+   contains `tpm2-device=auto`, systemd-cryptsetup may segfault during
+   the TPM unlock attempt — happens after "Successfully created
+   primary key on TPM" and *before* the keyfile/ask-password fallback,
+   so the agent never receives a request. Workaround: comment out
+   `tpm2-device=auto` until systemd is patched.
+
+2. **Impermanence + journal loss.** Default `services.journald` writes
+   to `/var/log/journal/` only if the directory exists. On a fresh
+   impermanence root where `/persistence/var/log` is empty, journald
+   silently falls back to volatile `/run/log/journal` and you lose
+   every diagnostic on reboot. Set:
+   ```nix
+   services.journald.extraConfig = ''
+     Storage=persistent
+     SystemMaxUse=200M
+   '';
+   ```
+
+3. **Mask the stock console agent only after the controller agent is
+   proven.** With `maskConsoleAgent = true` and no fallback, an agent
+   crash means *no* unlock path at all. Set it to `false` until you
+   have a week of clean reboots; once stable, flip on to suppress the
+   duplicate kernel-tty prompt.
+
+4. **Enroll environment must match unlock environment for the same
+   physical buttons to produce the same encoded chars.** Hid-steam
+   reports physical Y as `BTN_WEST` and physical X as `BTN_NORTH` —
+   opposite the Xbox-style convention. That's universal across stock
+   and Valve kernels, so enroll-on-installer + unlock-in-initrd both
+   produce the same encoded form. Do **not** introduce per-driver
+   "swap" logic — it breaks the consistency.
+
+5. **The Deck's panel is portrait-native (800x1280), displayed
+   landscape.** The agent's `DrmSurface` auto-detects this (connector
+   type == `EmbeddedDisplayPort` + height > width) and rotates the
+   render 90° CW. Other embedded panels with this geometry will get
+   the same treatment.
+
+6. **`boot.initrd.systemd.storePaths` does not auto-follow ExecStart
+   closure.** If you point a unit at a `writeShellScript` (e.g. for
+   debug logging), you must add both the script and every tool it
+   exec's to `storePaths`, or the unit fails 203/EXEC in the initrd.
 
 ## 0. Prerequisites and pre-flight
 

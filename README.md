@@ -4,13 +4,15 @@ Unlock LUKS2 root filesystems with a game controller. Built primarily
 for Steam Machines and the Steam Deck — also useful on any HTPC with a
 paired controller.
 
-> **Status: new and largely unproven.** Compiles, 19 unit tests pass,
-> all entry points wired end-to-end. The agent has **not** yet been
-> booted end-to-end on every supported distro — the per-distro guides
-> in [`docs/install/`](docs/install/) are *intended* recipes, not
-> known-good playbooks. Work through [`TESTING.md`](TESTING.md) before
-> enrolling on any real disk, and keep your keyboard keyslot as the
-> recovery path.
+> **Status:** booted end-to-end on a Steam Deck OLED running NixOS
+> (Jovian-NixOS, impermanence root, Valve `linux-*-valve1` kernel).
+> Unlock UI auto-rotates 90° for the Deck's portrait-native panel,
+> PIN entry via face buttons + d-pad works, and the system reaches
+> Steam Big Picture. 30 unit tests pass. The other distro guides in
+> [`docs/install/`](docs/install/) are still intended-recipes rather
+> than known-good playbooks. Work through [`TESTING.md`](TESTING.md)
+> before enrolling on any real disk, and keep your keyboard keyslot
+> as the recovery path.
 
 ---
 
