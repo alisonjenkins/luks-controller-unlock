@@ -93,3 +93,123 @@ running `cargo nextest run` directly on a Linux machine.
   trying to link a Mach-O binary against libdrm and break.
 - Don't install `cargo-edit` / `rust-analyzer` etc via rustup; the
   devshell already provides them.
+
+## Hard-won lessons (recorded so we don't relearn them)
+
+### cryptsetup `--key-file=-` is a binary keyfile, not a passphrase prompt
+
+`cryptsetup luksAddKey` reads `-` (stdin) as a binary keyfile and
+does **not** strip trailing newlines. Writing `existing\nnew\n` on
+stdin makes the existing-pass `existing\nnew` (one trailing `\n`
+stripped by happy accident) and the new keyslot `<empty>`. Enroll
+must:
+- pass `--keyfile-size $existing.len()` so cryptsetup reads exactly
+  that many bytes for the existing pass, and
+- write the new key WITHOUT any trailing newline.
+
+See `src/enroll.rs::add_keyslot`.
+
+### systemd-cryptsetup waits forever on a single ask file
+
+If the agent fails to reply to an `ask.<random>` file in
+`/run/systemd/ask-password/`, systemd-cryptsetup does **not**
+generate a new ask file — it blocks indefinitely. The agent must:
+- NOT mark a request as `handled` until it has successfully replied
+  (a DRM-open ENOENT during early-boot amdgpu init is a transient
+  error; the agent must retry the same ask file), and
+- back off briefly between retries so a permanent error doesn't
+  busy-spin.
+
+See `src/agent.rs::run`.
+
+### hid-steam swaps physical X/Y vs the Linux gamepad convention
+
+Both upstream Linux 7.x hid-steam and Valve's `linux-*-valve1`
+hid-steam fork emit `BTN_WEST` for the Deck's physical Y button
+and `BTN_NORTH` for physical X — the inverse of Xbox / DualSense /
+Switch Pro. **Do not try to "correct" this.** The PIN encoding is
+arbitrary as long as it's self-consistent between enroll and
+unlock; pressing the same physical button always produces the same
+kernel code and therefore the same encoded char. The cosmetic
+mismatch (test-input UI says "X" when user presses Y) is acceptable.
+A prior attempt to apply a per-driver swap broke enroll/unlock
+consistency and bricked unlock; see commits `2de7e4a` / `33b304d` /
+`eb85da7`.
+
+### Embedded portrait panels need rotation at blit time
+
+Steam Deck-class devices report an `EmbeddedDisplayPort` connector
+with portrait native dimensions (e.g. 800x1280) but are held in
+landscape. The renderer paints a logical landscape pixmap; the
+`blit_rgba_to_xrgb` in `src/ui/render.rs` rotates 90° CW when
+`DrmSurface::open` set `Rotation::Cw90`. Detection heuristic in
+`src/ui/drm.rs`: `connector == EmbeddedDisplayPort && height > width`.
+Future: read the DRM connector's panel-orientation property to
+handle "left side up" panels too. Don't try to fix this by
+modesetting at swapped dimensions — the kernel won't accept it.
+
+### `boot.initrd.systemd.storePaths` doesn't follow ExecStart= closure
+
+Any `writeShellScript` (or other store path) referenced from an
+initrd-systemd unit's `serviceConfig.ExecStart` must be listed
+explicitly in `boot.initrd.systemd.storePaths`, otherwise the unit
+runs but exec'ing the script fails with 203/EXEC because the path
+is a dangling reference in the initrd cpio. Same for any tools the
+script calls (full /nix/store paths are baked into a writeShellScript,
+so you must storePath each one). See `dist/nix/module.nix` —
+`agentWrapper`, `journalDump` and their referenced bash + coreutils
++ util-linux are all listed.
+
+### `boot.initrd.systemd.mounts` + `StandardOutput=append:` race
+
+systemd opens the unit's `StandardOutput=` redirection BEFORE it
+honours the `After=` ordering on a separate mount unit. A mount of
+the ESP at `/boot-debug` declared via `boot.initrd.systemd.mounts`
+isn't active when the agent unit tries to open
+`append:/boot-debug/luks-controller-unlock.log` → 209/STDOUT and
+the agent never runs. Workaround in `dist/nix/module.nix`: wrap
+the agent in a shell script that does the mount itself (and falls
+back to stderr if mount fails so we still get journal output).
+
+### NixOS impermanence `/var/log` is empty unless journald is `persistent`
+
+Default systemd-journald `Storage=auto` only persists if
+`/var/log/journal/` already exists. On a fresh impermanence root
+that bind-mounts an empty `/persistence/var/log` over `/var/log`,
+the directory doesn't exist → journald uses volatile `/run/log/journal`
+→ logs vanish on reboot. Set `services.journald.extraConfig =
+"Storage=persistent"` to force creation of the directory on first
+boot. This was the missing piece that made post-boot diagnostics
+possible.
+
+### Multi-cpio initrd extraction
+
+NixOS systemd-stage-1 produces a concatenated cpio archive:
+kernel-modules cpio + (zero-padded) zstd-compressed main rootfs
+cpio. `cpio -id < combined` only reads the first segment. To get
+the rootfs:
+1. Find `TRAILER!!!`, advance past it to a 4-byte boundary.
+2. Skip leading null bytes (padding).
+3. The remainder starts with the zstd magic `28 b5 2f fd`.
+4. `zstd -dc | cpio -id` to extract.
+
+Useful when verifying that a unit / wrapper script actually landed
+in the initrd before deploying.
+
+### TPM2 + systemd-cryptsetup segfault (systemd 258.7)
+
+systemd 258.7's `systemd-cryptsetup` segfaults in
+`libsystemd-shared` during the TPM2 unlock attempt on a Deck even
+when no TPM2 keyslot is enrolled. The crash happens after
+"Successfully created primary key on TPM" and BEFORE the
+keyfile/ask-password fallback. Workaround: remove
+`tpm2-device=auto` from crypttab options for the affected volume.
+Re-enable once systemd is patched.
+
+### Steam Deck IMU drives the gamepad device at ~250 Hz
+
+The Deck's built-in controller's IMU pumps ABS_X/Y/RX/RY events
+constantly while the agent is open. Per-event debug-level logging
+(e.g. "raw event") drowns the journal in seconds. Keep raw-event
+trace at `trace!` not `debug!`. The wrapper unit should pass `-v`
+(debug), NOT `-vv` (trace), to the agent for normal runs.
