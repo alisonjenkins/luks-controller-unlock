@@ -46,16 +46,32 @@ struct SavedCrtc {
     mode: Option<Mode>,
 }
 
+/// Rotation applied when blitting a logical pixmap into the native
+/// dumb buffer. The Steam Deck's embedded panel is physically mounted
+/// in portrait (native 800x1280) but always used in landscape, so the
+/// renderer paints a logical landscape pixmap and this rotation maps
+/// it into the actual native buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rotation {
+    None,
+    /// Rotate content 90° clockwise. Used on Steam Deck OLED (panel
+    /// orientation "right side up").
+    Cw90,
+}
+
 /// A modeset DRM surface backed by a dumb buffer.
 #[derive(Debug)]
 pub struct DrmSurface {
     card: Card,
     connector: connector::Handle,
+    /// Native panel pixel width.
     width: u32,
+    /// Native panel pixel height.
     height: u32,
     fb: framebuffer::Handle,
     db: drm::control::dumbbuffer::DumbBuffer,
     saved: SavedCrtc,
+    rotation: Rotation,
 }
 
 impl DrmSurface {
@@ -80,12 +96,25 @@ impl DrmSurface {
         let (w, h) = mode.size();
         let width = u32::from(w);
         let height = u32::from(h);
+        // Heuristic: an embedded panel reporting portrait dimensions
+        // is almost certainly a tablet / Steam-Deck-style device used
+        // in landscape. Apply a 90° CW rotation when blitting so the
+        // UI reads correctly. Future improvement: read the DRM
+        // connector's panel-orientation property instead.
+        let rotation = if connector.interface() == connector::Interface::EmbeddedDisplayPort
+            && height > width
+        {
+            Rotation::Cw90
+        } else {
+            Rotation::None
+        };
         info!(
             connector = ?connector.interface(),
             crtc = ?crtc_handle,
             width,
             height,
             refresh = mode.vrefresh(),
+            rotation = ?rotation,
             "drm: modeset target",
         );
 
@@ -120,14 +149,29 @@ impl DrmSurface {
             fb,
             db,
             saved,
+            rotation,
         })
     }
 
+    /// Logical width to render with (swaps with height when rotated 90°).
     pub const fn width(&self) -> u32 {
-        self.width
+        match self.rotation {
+            Rotation::None => self.width,
+            Rotation::Cw90 => self.height,
+        }
     }
+
+    /// Logical height to render with.
     pub const fn height(&self) -> u32 {
-        self.height
+        match self.rotation {
+            Rotation::None => self.height,
+            Rotation::Cw90 => self.width,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub const fn rotation(&self) -> Rotation {
+        self.rotation
     }
 
     /// Map the dumb buffer for CPU writes. Pixels are XRGB8888 little-endian
@@ -135,17 +179,19 @@ impl DrmSurface {
     /// dropping the returned `Frame` (no-op; the CRTC already scans it).
     pub fn frame(&mut self) -> Result<Frame<'_>> {
         let stride = self.db.pitch();
-        let width = self.width;
-        let height = self.height;
+        let native_width = self.width;
+        let native_height = self.height;
+        let rotation = self.rotation;
         let map = self
             .card
             .map_dumb_buffer(&mut self.db)
             .map_err(|e| Error::Drm(format!("map_dumb_buffer: {e}")))?;
         Ok(Frame {
             map,
-            width,
-            height,
+            native_width,
+            native_height,
             stride,
+            rotation,
         })
     }
 }
@@ -174,17 +220,23 @@ impl Drop for DrmSurface {
 /// A live mapping into the dumb buffer. Holds the mmap until dropped.
 pub struct Frame<'s> {
     map: drm::control::dumbbuffer::DumbMapping<'s>,
-    width: u32,
-    height: u32,
+    /// Native panel pixel width (orientation as the kernel reports it).
+    native_width: u32,
+    /// Native panel pixel height.
+    native_height: u32,
+    /// Bytes per row in the dumb buffer (≥ `native_width` * 4).
     stride: u32,
+    /// Rotation to apply when blitting a logical pixmap.
+    rotation: Rotation,
 }
 
 impl std::fmt::Debug for Frame<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Frame")
-            .field("width", &self.width)
-            .field("height", &self.height)
+            .field("native_width", &self.native_width)
+            .field("native_height", &self.native_height)
             .field("stride", &self.stride)
+            .field("rotation", &self.rotation)
             .finish_non_exhaustive()
     }
 }
@@ -194,14 +246,33 @@ impl Frame<'_> {
         self.map.as_mut()
     }
 
+    /// Logical width — what the renderer should use to size its pixmap.
     pub const fn width(&self) -> u32 {
-        self.width
+        match self.rotation {
+            Rotation::None => self.native_width,
+            Rotation::Cw90 => self.native_height,
+        }
     }
+
+    /// Logical height.
     pub const fn height(&self) -> u32 {
-        self.height
+        match self.rotation {
+            Rotation::None => self.native_height,
+            Rotation::Cw90 => self.native_width,
+        }
+    }
+
+    pub const fn native_width(&self) -> u32 {
+        self.native_width
+    }
+    pub const fn native_height(&self) -> u32 {
+        self.native_height
     }
     pub const fn stride(&self) -> u32 {
         self.stride
+    }
+    pub const fn rotation(&self) -> Rotation {
+        self.rotation
     }
 }
 

@@ -240,15 +240,30 @@ fn draw_text(pix: &mut Pixmap, text: &str, x: f32, y: f32, scale: u32, color: Co
 
 fn blit_rgba_to_xrgb(pix: &Pixmap, frame: &mut Frame<'_>) {
     let src = pix.pixels();
-    let w = frame.width() as usize;
-    let h = frame.height() as usize;
+    // Logical (renderer) dimensions.
+    let logical_w = frame.width() as usize;
+    let logical_h = frame.height() as usize;
+    // Native (panel) dimensions — what the dumb buffer actually is.
+    let native_w = frame.native_width() as usize;
+    // native_h not needed directly; stride×row indexing already
+    // sized by the dumb buffer's actual byte length.
+    let _native_h = frame.native_height() as usize;
     let stride = frame.stride() as usize;
+    let rotation = frame.rotation();
     let dst = frame.pixels_mut();
-    for y in 0..h {
-        let row_off = y * stride;
-        for x in 0..w {
-            let p = src[y * w + x];
-            let off = row_off + x * 4;
+
+    for ly in 0..logical_h {
+        for lx in 0..logical_w {
+            let p = src[ly * logical_w + lx];
+            // Map logical (lx, ly) to native (px, py) per rotation.
+            // For Cw90: panel's "right side up" means content rotated
+            // 90° clockwise — logical top-left ends up at panel
+            // top-right.
+            let (px, py) = match rotation {
+                crate::ui::drm::Rotation::None => (lx, ly),
+                crate::ui::drm::Rotation::Cw90 => (native_w - 1 - ly, lx),
+            };
+            let off = py * stride + px * 4;
             dst[off] = p.blue();
             dst[off + 1] = p.green();
             dst[off + 2] = p.red();
