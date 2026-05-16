@@ -99,7 +99,6 @@ impl std::fmt::Debug for Controller {
 /// stable across drivers we pick exactly one source per logical input
 /// at device open and ignore the other to avoid double-emit.
 #[derive(Debug, Clone, Copy)]
-#[allow(clippy::struct_excessive_bools)] // boolean caps describe orthogonal evdev features
 pub struct Capabilities {
     /// True if `ABS_Z` is supported and is the chosen LT source.
     pub lt_uses_axis: bool,
@@ -116,12 +115,6 @@ pub struct Capabilities {
     pub rt_press_threshold: i32,
     /// Release threshold for `ABS_RZ`, scaled to the reported axis range.
     pub rt_release_threshold: i32,
-    /// Swap canonical face-button mapping for `BTN_NORTH` and `BTN_WEST`.
-    /// Set when the device is a Steam Deck built-in controller running
-    /// under Valve's hid-steam fork (in `linux-*-valve1` kernels), which
-    /// reports physical Y as `BTN_WEST` and physical X as `BTN_NORTH` —
-    /// the inverse of the upstream Linux gamepad convention.
-    pub swap_north_west: bool,
 }
 
 impl Controller {
@@ -139,19 +132,20 @@ impl Controller {
             }
             let name = dev.name().unwrap_or("(unnamed)").to_owned();
             let path_s = path.display().to_string();
-            let mut caps = probe_capabilities(&dev);
-            // Valve's `linux-*-valve1` hid-steam fork swaps BTN_NORTH
-            // and BTN_WEST for the Deck's built-in controller relative
-            // to the upstream Linux convention. The device name is
-            // "Steam Deck" under BOTH kernels (so name alone isn't a
-            // valid discriminator), but the kernel release string
-            // contains "valve" only on Valve's kernel. Flip the
-            // canonical mapping only there so a PIN encoded on a stock
-            // kernel and a PIN encoded on a Valve kernel produce the
-            // same canonical char sequence for the same physical buttons.
-            if name == "Steam Deck" && kernel_is_valve() {
-                caps.swap_north_west = true;
-            }
+            let caps = probe_capabilities(&dev);
+            // NOTE on Steam Deck face button mapping: both upstream
+            // Linux 7.x hid-steam and Valve's linux-*-valve1 hid-steam
+            // emit BTN_WEST for the physical Y button and BTN_NORTH
+            // for the physical X — the opposite of the labels on the
+            // controller. Our canonical table uses the kernel codes
+            // verbatim (BTN_WEST→X char 'c', BTN_NORTH→Y char 'd'),
+            // so on the Deck the encoded form has Y/X visually swapped
+            // vs the labels. That's OK: PIN encoding only needs to be
+            // SELF-CONSISTENT between enroll and unlock — and pressing
+            // the same physical button always produces the same kernel
+            // code, so the same encoded char results. UI labels are
+            // cosmetic; we may want to rename in test-input later for
+            // clarity, but the unlock path is correct.
             info!(
                 path = %path_s, name = %name,
                 lt_axis = caps.lt_uses_axis,
@@ -159,7 +153,6 @@ impl Controller {
                 dpad_hat = caps.dpad_uses_hat,
                 lt_press = caps.lt_press_threshold,
                 rt_press = caps.rt_press_threshold,
-                swap_nw = caps.swap_north_west,
                 "input: opened controller"
             );
             return Ok(Self {
@@ -296,7 +289,7 @@ impl Controller {
         }
 
         if value == 1 {
-            return key_to_canonical(code, self.caps.swap_north_west).map(InputEvent::Press);
+            return key_to_canonical(code, false).map(InputEvent::Press);
         }
         None
     }
@@ -403,11 +396,6 @@ fn clamp_ms(d: Duration) -> i32 {
     i32::try_from(d.as_millis()).unwrap_or(i32::MAX).max(0)
 }
 
-fn kernel_is_valve() -> bool {
-    std::fs::read_to_string("/proc/sys/kernel/osrelease")
-        .is_ok_and(|s| s.to_ascii_lowercase().contains("valve"))
-}
-
 fn is_gamepad(dev: &evdev::Device) -> bool {
     dev.supported_keys()
         .is_some_and(|keys| keys.contains(evdev::KeyCode::new(BTN_SOUTH)))
@@ -467,9 +455,6 @@ fn probe_capabilities(dev: &evdev::Device) -> Capabilities {
         lt_release_threshold: lt_release,
         rt_press_threshold: rt_press,
         rt_release_threshold: rt_release,
-        // Caller (Controller::open_first) flips this on for "Steam Deck"
-        // devices; probe_capabilities has no name context.
-        swap_north_west: false,
     }
 }
 
