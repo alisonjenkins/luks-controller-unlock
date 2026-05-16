@@ -140,11 +140,16 @@ impl Controller {
             let name = dev.name().unwrap_or("(unnamed)").to_owned();
             let path_s = path.display().to_string();
             let mut caps = probe_capabilities(&dev);
-            // Steam Deck's built-in controller under Valve's hid-steam
-            // fork swaps BTN_NORTH and BTN_WEST relative to upstream.
-            // Detect by name and flip the canonical mapping so a PIN
-            // enrolled here matches a PIN enrolled on a stock kernel.
-            if name == "Steam Deck" {
+            // Valve's `linux-*-valve1` hid-steam fork swaps BTN_NORTH
+            // and BTN_WEST for the Deck's built-in controller relative
+            // to the upstream Linux convention. The device name is
+            // "Steam Deck" under BOTH kernels (so name alone isn't a
+            // valid discriminator), but the kernel release string
+            // contains "valve" only on Valve's kernel. Flip the
+            // canonical mapping only there so a PIN encoded on a stock
+            // kernel and a PIN encoded on a Valve kernel produce the
+            // same canonical char sequence for the same physical buttons.
+            if name == "Steam Deck" && kernel_is_valve() {
                 caps.swap_north_west = true;
             }
             info!(
@@ -396,6 +401,11 @@ fn compute_wait(b: &BState, timeout: Option<Duration>) -> i32 {
 
 fn clamp_ms(d: Duration) -> i32 {
     i32::try_from(d.as_millis()).unwrap_or(i32::MAX).max(0)
+}
+
+fn kernel_is_valve() -> bool {
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .is_ok_and(|s| s.to_ascii_lowercase().contains("valve"))
 }
 
 fn is_gamepad(dev: &evdev::Device) -> bool {
