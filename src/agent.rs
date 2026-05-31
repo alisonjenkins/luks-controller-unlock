@@ -73,58 +73,65 @@ pub fn run(args: &Args) -> Result<()> {
     let mut handled = std::collections::HashSet::<PathBuf>::new();
     let mut lockout = LOCKOUT_INITIAL;
 
-    // Process any requests that already exist.
-    process_pending(&args.watch_dir, &args.card, &mut handled, &mut lockout)?;
-
     let mut buffer = [0u8; 4096];
     loop {
-        let events = match inot.read_events_blocking(&mut buffer) {
-            Ok(it) => it,
+        // Drive everything off a direct directory scan. process_pending
+        // returns the number of ask files that exist but could not be
+        // handled this pass — almost always because /dev/dri/card0 has
+        // not been enumerated yet while the GPU driver (e.g. amdgpu) is
+        // still loading in early initrd.
+        let unresolved =
+            process_pending(&args.watch_dir, &args.card, &mut handled, &mut lockout)?;
+
+        if unresolved > 0 {
+            // A request is waiting but we cannot open the DRM surface yet.
+            // systemd-cryptsetup reuses the SAME ask.* file — it does not
+            // write a new one — so no inotify event is coming. Blocking on
+            // inotify here would hang until cryptsetup's own timeout, and
+            // the prompt would never appear even though the card shows up
+            // a second or two later. Poll on a short timer and retry the
+            // moment the DRM node is ready.
+            //
+            // This is the fix for the "no unlock prompt" failure seen on
+            // the Steam Deck valve kernel: amdgpu's card0 arrived ~1.5s
+            // after the agent had already returned to a blocking inotify
+            // read and stopped retrying.
+            std::thread::sleep(POLL_TIMEOUT);
+            continue;
+        }
+
+        // Nothing actionable right now — block until systemd writes a new
+        // request. The events are only a wakeup; the next iteration's
+        // process_pending scan is the source of truth for which ask files
+        // exist (so a missed/coalesced event cannot strand a request).
+        match inot.read_events_blocking(&mut buffer) {
+            Ok(events) => {
+                for _ in events {}
+            }
             Err(e) => {
                 warn!("agent: inotify read failed: {e}; retrying");
                 std::thread::sleep(POLL_TIMEOUT);
-                continue;
-            }
-        };
-        let mut new_files = Vec::new();
-        for ev in events {
-            if let Some(name) = ev.name {
-                let path = args.watch_dir.join(name);
-                if is_ask_file(&path) && !handled.contains(&path) {
-                    new_files.push(path);
-                }
             }
         }
-        for path in new_files {
-            // Only mark handled on success. A transient failure (e.g.
-            // DRM card not yet enumerated when amdgpu is still loading,
-            // controller hot-plug race) must NOT mark the request as
-            // handled — systemd-cryptsetup waits indefinitely on the
-            // same ask file and never generates a new one, so a
-            // permanent "handled but never replied" entry would brick
-            // the boot.
-            if let Err(e) = process_request(&path, &args.card, &mut lockout) {
-                warn!(?path, "agent: failed to process request: {e}; will retry");
-                // Brief backoff so we don't busy-loop if the error is
-                // immediate (e.g. ENOENT on /dev/dri/card0).
-                std::thread::sleep(Duration::from_millis(500));
-            } else {
-                handled.insert(path);
-            }
-        }
-        // Re-scan: inotify can miss a file created between watch setup and
-        // a previously-handled batch; cheap to re-poll.
-        process_pending(&args.watch_dir, &args.card, &mut handled, &mut lockout)?;
     }
 }
 
+/// Scan the watch directory and try to handle every ask file not already
+/// handled. Returns the number of ask files that still exist but could not
+/// be handled this pass (e.g. the DRM card is not enumerated yet) so the
+/// caller can choose to poll-retry rather than block on inotify.
+///
+/// A failure must NOT mark the request handled: systemd-cryptsetup waits
+/// indefinitely on the same ask file and never generates a new one, so a
+/// "handled but never replied" entry would brick the boot.
 fn process_pending(
     dir: &Path,
     card: &Path,
     handled: &mut std::collections::HashSet<PathBuf>,
     lockout: &mut Duration,
-) -> Result<()> {
+) -> Result<usize> {
     let read = fs::read_dir(dir).map_err(Error::Io)?;
+    let mut unresolved = 0usize;
     for entry in read.flatten() {
         let path = entry.path();
         if !is_ask_file(&path) || handled.contains(&path) {
@@ -132,14 +139,12 @@ fn process_pending(
         }
         if let Err(e) = process_request(&path, card, lockout) {
             warn!(?path, "agent: failed to process request: {e}; will retry");
-            // Do NOT mark handled so the next poll re-tries this ask
-            // file — see the main loop for the rationale.
-            std::thread::sleep(Duration::from_millis(500));
+            unresolved += 1;
             continue;
         }
         handled.insert(path);
     }
-    Ok(())
+    Ok(unresolved)
 }
 
 fn process_request(path: &Path, card: &Path, lockout: &mut Duration) -> Result<()> {
