@@ -12,7 +12,15 @@
 
   outputs = { nixpkgs, flake-utils, fenix, ... }:
     let
-      perSystem = flake-utils.lib.eachDefaultSystem (system:
+      # Explicit system list: nixpkgs 26.11 dropped x86_64-darwin, so
+      # enumerating flakeExposed (which still lists it) throws when the
+      # merged output set forces every system's legacyPackages. Only the
+      # systems this project actually targets are listed.
+      perSystem = flake-utils.lib.eachSystem [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ] (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
           fenixPkgs = fenix.packages.${system};
